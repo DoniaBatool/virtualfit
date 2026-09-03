@@ -8,7 +8,7 @@ export function register() {
     typeof globalThis.localStorage?.getItem !== "function"
   ) {
     const store: Record<string, string> = {};
-    // @ts-expect-error patching globalThis in Node.js environment
+    // @ts-ignore patching globalThis in Node.js environment
     globalThis.localStorage = {
       getItem:    (k: string) => store[k] ?? null,
       setItem:    (k: string, v: string) => { store[k] = v; },
