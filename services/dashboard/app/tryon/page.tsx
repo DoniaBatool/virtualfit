@@ -11,6 +11,7 @@ interface TryOnResult {
   request_id: string;
   result_image_b64?: string;
   result_url?: string;
+  result_image_url?: string;
   recommended_size: string;
   fit_score: number;
   mode: string;
