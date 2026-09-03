@@ -1,0 +1,17 @@
+VIDEO LEG 2 — AI Design Studio
+Architecture A: Continuous Walkthrough
+Start Frame: LAST FRAME extracted from leg_1.mp4
+(screenshot the final frame of Leg 1 video, use that as start frame)
+Duration: 8 seconds | Ratio: 16:9 | No audio
+
+PROMPT:
+Single continuous cinematic camera move, no cuts. Starting from a
+corridor view, the camera glides smoothly forward and enters a sleek
+AI design studio. It performs a slow, elegant half-arc tracking move
+around the central hero workstation — a glowing monitor showing a 3D
+garment wireframe — revealing the full room from left to right as it
+orbits. The monitors glow with blue-white light, casting subtle
+reflections on the white desk surface. In the final 1 second, the
+camera eases back into a gentle forward drift looking toward the
+studio exit doorway, settling smoothly.
+Photoreal, cinematic, no shake, no text, no people.

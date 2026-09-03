@@ -1,0 +1,18 @@
+VIDEO LEG 3 — Smart Manufacturing
+Architecture A: Continuous Walkthrough
+Start Frame: LAST FRAME extracted from leg_2.mp4
+Duration: 8 seconds | Ratio: 16:9 | No audio
+
+PROMPT:
+Single continuous cinematic camera move, no cuts. The camera enters
+from the far end of a high-tech automated garment manufacturing floor.
+It begins with a slow lateral tracking move — gliding left to right
+alongside a row of gleaming automated machines, their status screens
+glowing blue, showing the machines in elegant side profile.
+Then it eases forward and slightly rises — a gentle crane-up move —
+revealing the full scale of the factory: rows of machines stretching
+into the distance, garments moving along ceiling rail systems.
+The perspective shift is gradual and dramatic. In the final 1 second,
+the camera settles into a steady slow forward glide heading toward
+the factory's exit corridor.
+Photoreal, cinematic, no shake, no text, no people.

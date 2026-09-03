@@ -1,0 +1,18 @@
+VIDEO LEG 4 — Luxury Store
+Architecture A: Continuous Walkthrough
+Start Frame: LAST FRAME extracted from leg_3.mp4
+Duration: 8 seconds | Ratio: 16:9 | No audio
+
+PROMPT:
+Single continuous cinematic camera move, no cuts. The camera enters
+the entrance of an ultra-luxury fashion store and glides forward down
+the central marble aisle. Garment racks pass elegantly on both sides
+in parallax — clothing displayed with perfect spacing on sleek black
+circular racks. The camera performs a subtle slow push-in toward
+the dramatic backlit far wall display, getting closer and more
+intimate with the premium garments. Ceiling recessed lights create
+warm pools of light on each rack as the camera passes beneath them.
+The movement is unhurried, luxurious. In the final 1 second, the
+camera eases into a gentle forward drift heading toward the store's
+private fitting area at the far end.
+Photoreal, cinematic, no shake, no text, no people.

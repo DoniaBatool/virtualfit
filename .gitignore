@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Rust
+target/
+Cargo.lock
+
+# Go
+*.exe
+vendor/
+
+# Node
+node_modules/
+.next/
+.env.local
+
+# ML model weights (too large for git — use scripts/download_models.py)
+*.pt
+*.pth
+*.h5
+*.onnx
+*.task
+services/ml-pipeline/checkpoints/
+services/ml-pipeline/vendor/IDM-VTON/
+services/ml-pipeline/vendor/IDM-VTON-weights/
+
+# Uploaded & processed images
+garments/uploads/
+results/
+
+# Env
+.env
+
+# OS
+.DS_Store
+Thumbs.db

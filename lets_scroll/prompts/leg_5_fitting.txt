@@ -1,0 +1,18 @@
+VIDEO LEG 5 — AI Virtual Fitting Room
+Architecture A: Continuous Walkthrough
+Start Frame: LAST FRAME extracted from leg_4.mp4
+Duration: 8 seconds | Ratio: 16:9 | No audio
+
+PROMPT:
+Single continuous cinematic camera move, no cuts. The camera enters
+a circular futuristic AI fitting room and slowly approaches the
+central smart mirror. It begins wide — showing the full circular room
+— then performs a gradual, deliberate push-in toward the glowing
+mirror. As it gets closer, the mirror's display comes into focus:
+a photorealistic 3D avatar wearing a navy blazer, body measurement
+overlays glowing in electric blue on the sides. The camera slows
+and settles directly in front of the mirror at medium close distance,
+creating an intimate, almost reflective moment. In the final 1 second,
+the camera eases into a very slow forward drift, inching toward
+the mirror's glowing surface.
+Photoreal, cinematic, no shake, no text, no people.

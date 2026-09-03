@@ -1,0 +1,19 @@
+VIDEO LEG 6 — Hero Shot (Final Scene)
+Architecture A: Continuous Walkthrough — FINAL LEG
+Start Frame: LAST FRAME extracted from leg_5.mp4
+Duration: 8 seconds | Ratio: 16:9 | No audio
+
+PROMPT:
+Single continuous cinematic camera move, no cuts. The camera enters
+a premium fashion photography studio and slowly approaches a
+dramatically lit hero display: a navy blazer and tailored trousers
+hung on an elegant invisible display form, lit from above with a
+single powerful hero spotlight. The camera begins at medium distance
+and performs a slow, majestic push-in toward the garments — closing
+in on the fine details of the fabric texture, the precision of the
+lapel, the quality of the stitching. The background seamless white
+backdrop glows softly. The movement is reverent and deliberate —
+this is the culmination of the journey. The camera ends at a close
+medium shot of the garment — confident, still, and beautiful.
+No sudden stops — end with a barely perceptible slow drift forward.
+Photoreal, cinematic, no shake, no text, no people.

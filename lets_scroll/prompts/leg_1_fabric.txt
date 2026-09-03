@@ -1,0 +1,17 @@
+VIDEO LEG 1 — Fabric Warehouse
+Architecture A: Continuous Walkthrough
+Start Frame: still_1_fabric.jpg (upload this as the first/start frame)
+Duration: 8 seconds | Ratio: 16:9 | No audio
+
+PROMPT:
+Single continuous cinematic camera move, no cuts. The camera begins
+at the entrance of a vast luxury fabric warehouse, framing the long
+central aisle with towering shelves of fabric bolts on either side.
+It glides forward slowly and steadily down the central aisle,
+heading deeper into the warehouse. As it travels, fabric textures
+on both sides pass in elegant parallax. The lighting from LED strips
+glows warmly on the rolled fabrics. The camera maintains a smooth,
+steady pace — like a luxury film dolly shot. In the final 1 second,
+the camera settles into a gentle, slow forward drift toward the far
+end of the warehouse, ready to transition to the next scene.
+Photoreal, cinematic, no shake, no text, no people.
