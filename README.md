@@ -1,14 +1,12 @@
 # 👗 VirtualFit — AI Virtual Try-On System
 
-> Polyglot AI system: upload your photo → see yourself wearing clothes, bags, makeup, colored contacts, hats, and shoes instantly.
+> Upload your photo → see yourself wearing clothes, bags, makeup, colored contacts, hats, and shoes instantly.
 
-**Stack:** Rust · Go · Python · TypeScript/Next.js 15 · **AI:** Cloud-based ML inference via Perfect Corp YouCam API, with custom multi-feature try-on pipeline built on top.
+**Stack:** Python FastAPI · Next.js 15 · **AI:** Cloud-based ML inference via Perfect Corp YouCam API, with custom multi-feature try-on pipeline built on top.
 
 ---
 
 ## What It Does
-
-VirtualFit is a full-stack AI virtual try-on platform built with 4 different technologies working together:
 
 - 👔 **Clothes Try-On** — shirt, dress, jacket, pants (upper / lower / full body)
 - 👜 **Bag Try-On** — handbag / purse with style presets (Parisian Chic, Urban Chic, Art Deco…)
@@ -25,34 +23,32 @@ All AI inference runs on **Perfect Corp's cloud** (YouCam API) — photorealisti
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                   Next.js 15 Dashboard               │
-│        Landing Page (scroll animation) → Try-On UI  │
+│              Next.js 15 Dashboard (Vercel)           │
+│   / → Landing Page   /tryon → Try-On   /wardrobe    │
 └──────────────────┬──────────────────────────────────┘
-                   │ HTTP
+                   │ HTTP (NEXT_PUBLIC_GATEWAY_URL)
 ┌──────────────────▼──────────────────────────────────┐
-│              Go Gateway (Fiber v3)                   │
-│              JWT Auth · Rate Limiting · Proxy        │
+│         Python ML Pipeline (Railway / local)         │
+│              FastAPI · YouCam API calls              │
 └──────────────────┬──────────────────────────────────┘
-                   │ DAPR pub/sub (Redpanda/Kafka)
-        ┌──────────┼──────────┐
-        │          │          │
-┌───────▼───┐ ┌────▼────┐ ┌──▼──────────────────────┐
-│   Rust    │ │ Python  │ │      MinIO (S3)          │
-│  Image    │ │   ML    │ │   Image Storage          │
-│ Processor │ │Pipeline │ └─────────────────────────┘
-│  (Axum)  │ │(FastAPI)│
-└───────────┘ └─────────┘
+                   │ REST API
+┌──────────────────▼──────────────────────────────────┐
+│         Perfect Corp YouCam AI (cloud)               │
+│  Clothes · Bag · Makeup · Eye Color · Hat · Shoes   │
+└─────────────────────────────────────────────────────┘
+         ↓ result images
+┌─────────────────────────────────────────────────────┐
+│              MinIO (local Docker, optional)          │
+│              S3-compatible image storage             │
+└─────────────────────────────────────────────────────┘
 ```
 
-| Service | Language | Framework | Port |
+| Service | Tech | Deployed On | Port |
 |---|---|---|---|
-| Dashboard | TypeScript | Next.js 15 | 3002 |
-| Gateway | Go | Fiber v3 | 8080 |
-| ML Pipeline | Python | FastAPI + uv | 8001 |
-| Image Processor | Rust | Axum | 3001 |
-| Message Broker | — | Redpanda (Kafka) | 9092 |
-| Object Storage | — | MinIO (S3) | 9000 |
-| State Store | — | Redis | 6379 |
+| Dashboard | Next.js 15 | Vercel | — |
+| ML Pipeline | Python FastAPI | Railway | 8001 |
+| AI Inference | YouCam API | Perfect Corp cloud | — |
+| Image Storage | MinIO | Docker (local, optional) | 9000 |
 
 ---
 
@@ -68,40 +64,34 @@ All AI inference runs on **Perfect Corp's cloud** (YouCam API) — photorealisti
 | 👟 Shoes Try-On | YouCam `/task/shoes` | Full-body foot detection |
 
 **Provider:** [Perfect Corp YouCam API](https://yce.makeupar.com/ai-api) — register free, get API key, add to `.env`  
-**No local GPU required** — all inference on Perfect Corp's cloud (A100s).
+**No local GPU required** — all inference on Perfect Corp's cloud.
 
 ---
 
 ## Project Structure
 
 ```
-virtualfit/
+virtual_tryon/
 ├── services/
-│   ├── dashboard/          # Next.js 15 frontend
+│   ├── dashboard/              # Next.js 15 frontend (deployed to Vercel)
 │   │   ├── app/
-│   │   │   ├── page.tsx        # Redirects to landing page
-│   │   │   ├── tryon/          # Main try-on UI
-│   │   │   └── wardrobe/       # Saved results
-│   │   └── public/
-│   │       └── landing.html    # Cinematic scroll landing page
-│   ├── gateway/            # Go Fiber v3 API gateway
-│   ├── ml-pipeline/        # Python FastAPI ML service
-│   │   ├── app/
-│   │   │   ├── main.py         # FastAPI app + all 6 try-on endpoints
-│   │   │   ├── tryon.py        # YouCam API integration (all features)
-│   │   │   └── storage.py      # MinIO integration
-│   │   └── pyproject.toml      # Lightweight deps (no torch/qiskit)
-│   └── image-processor/    # Rust Axum image processing
-├── spaces/                 # Streamlit Cloud deployment
-│   ├── app.py              # Streamlit app (3 tabs)
-│   └── requirements.txt
-├── infra/
-│   ├── dapr/components/    # DAPR pub/sub + statestore config
-│   └── migrations/         # PostgreSQL schema
-├── monitoring/
-│   └── prometheus/         # Prometheus config
-├── docker-compose.yml      # Full stack orchestration
-└── PLAN.md                 # Project roadmap
+│   │   │   ├── page.tsx            # Redirects to landing page
+│   │   │   ├── tryon/page.tsx      # Main try-on UI (6 feature tabs)
+│   │   │   └── wardrobe/page.tsx   # Saved results with lightbox
+│   │   ├── public/
+│   │   │   └── landing.html        # Cinematic scroll landing page
+│   │   └── vercel.json             # Vercel deployment config
+│   └── ml-pipeline/            # Python FastAPI ML service (deployed to Railway)
+│       ├── app/
+│       │   ├── main.py             # FastAPI app + all 6 try-on endpoints
+│       │   ├── tryon.py            # YouCam API integration (all features)
+│       │   └── storage.py          # MinIO integration
+│       ├── pyproject.toml          # Lightweight deps (no torch/diffusers)
+│       ├── railway.json            # Railway deployment config
+│       └── Procfile                # Railway start command
+├── docker-compose.yml          # MinIO + PostgreSQL only
+├── .env                        # API keys (gitignored)
+└── CLAUDE.md                   # Dev notes + architecture
 ```
 
 ---
@@ -110,19 +100,17 @@ virtualfit/
 
 ### Prerequisites
 
-- Docker Desktop
+- Docker Desktop (for MinIO, optional)
 - Node.js 20+ and pnpm
 - Python 3.12+ and uv
-- Rust (stable)
-- Go 1.22+
+- YouCam API key from [yce.makeupar.com/ai-api](https://yce.makeupar.com/ai-api)
 
-### 1. Start Infrastructure
+### 1. Set up environment
 
 ```bash
-docker-compose up -d
+# Add your YouCam API key to .env
+echo "YOUCAM_API_KEY=your_key_here" >> .env
 ```
-
-Starts: Redpanda, Redis, MinIO, PostgreSQL, DAPR sidecar, Prometheus, Grafana.
 
 ### 2. ML Pipeline
 
@@ -132,27 +120,7 @@ uv sync
 uv run uvicorn app.main:app --port 8001 --reload
 ```
 
-**Optional — Download IDM-VTON weights (~9 GB):**
-```bash
-hf download yisol/IDM-VTON --local-dir vendor/IDM-VTON-weights
-```
-Without weights, Fast Preview (PIL composite) mode is used automatically.
-
-### 3. Go Gateway
-
-```bash
-cd services/gateway
-go run cmd/main.go
-```
-
-### 4. Rust Image Processor
-
-```bash
-cd services/image-processor
-cargo run --release
-```
-
-### 5. Next.js Dashboard
+### 3. Next.js Dashboard
 
 ```bash
 cd services/dashboard
@@ -160,7 +128,13 @@ pnpm install
 pnpm dev
 ```
 
-Open [http://localhost:3002](http://localhost:3002) — landing page loads first, then click **Try It Free** to go to the try-on UI.
+Open [http://localhost:3002](http://localhost:3002) — landing page loads first.
+
+### 4. (Optional) Start MinIO for image storage
+
+```bash
+docker compose up -d
+```
 
 ---
 
@@ -170,77 +144,86 @@ Open [http://localhost:3002](http://localhost:3002) — landing page loads first
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/health` | Service status + model info |
-| POST | `/api/tryon` | Virtual try-on (person + garment images) |
-| POST | `/api/segment` | SAM2 person segmentation |
-| POST | `/api/measure` | MediaPipe body measurements |
-| POST | `/api/recommend-size` | TensorFlow size prediction |
-| GET | `/api/quantum-match` | Qiskit Grover's garment search |
-| GET | `/api/tryon/status` | Model download status |
+| GET | `/health` | Service status |
+| GET | `/api/tryon/status` | YouCam API connection status |
+| POST | `/api/tryon` | Clothes virtual try-on |
+| POST | `/api/bag` | Bag try-on |
+| POST | `/api/makeup` | Makeup try-on |
+| POST | `/api/eye-color` | Eye color try-on |
+| POST | `/api/hat` | Hat try-on |
+| POST | `/api/shoes` | Shoes try-on |
 
-### Example: Try-On Request
+### Example: Clothes Try-On
 
 ```bash
 curl -X POST http://localhost:8001/api/tryon \
   -F "person_image=@/path/to/person.jpg" \
   -F "garment_image=@/path/to/shirt.jpg" \
-  -F "steps=30"
-```
-
-### Example: Quantum Search
-
-```bash
-curl "http://localhost:8001/api/quantum-match?body_type=athletic&category=shirt&top_k=5"
+  -F "category=upper_body"
 ```
 
 ---
 
-## Quantum Search — How It Works
+## Deployment
 
-VirtualFit uses **Grover's Algorithm** (quantum computing) to search through the garment catalog:
+### Vercel (Dashboard)
 
-- **Classical search:** Up to N=16 checks needed
-- **Quantum search:** Only √16 = **4 checks** needed — O(√N) speedup
-- **Implementation:** 4-qubit circuit, oracle + diffuser, Qiskit Aer simulator
-- **Result:** Top-5 garments ranked by quantum probability amplitude
+1. Go to [vercel.com](https://vercel.com) → New Project → import repo
+2. Set Root Directory: `services/dashboard`
+3. Add env var: `NEXT_PUBLIC_GATEWAY_URL=https://your-railway-url`
+4. Deploy
 
-```
-Body type: athletic  |  Category: shirt
-→ Quantum circuit: 4 qubits, 2 Grover iterations
-→ Results: Classic White Shirt (87%), Striped Oxford (79%), ...
+### Railway (ML Pipeline)
+
+1. Go to [railway.app](https://railway.app) → New Project → Deploy from GitHub
+2. Set Root Directory: `services/ml-pipeline`
+3. Add env vars: `YOUCAM_API_KEY`, `YOUCAM_SECRET_KEY`
+4. Deploy (auto-detected from `railway.json`)
+
+---
+
+## Environment Variables
+
+```env
+# YouCam API (required)
+YOUCAM_API_KEY=your_api_key_here
+YOUCAM_SECRET_KEY=your_secret_key_here
+
+# JWT (for future auth)
+JWT_SECRET=your_jwt_secret
+
+# MinIO (optional — local image storage)
+MINIO_ENDPOINT=localhost:9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+MINIO_BUCKET=tryon-images
+
+# Database (optional — for future user accounts)
+DATABASE_URL=postgresql://vtuser:vtpass@localhost:5433/virtual_tryon
+
+# Service URLs
+NEXT_PUBLIC_GATEWAY_URL=http://localhost:8001
 ```
 
 ---
 
-## Streamlit Demo (Free Cloud Deploy)
+## Error Reference
 
-The `spaces/` directory contains a standalone Streamlit app with all 3 features:
+### dotenv timing issue — API key "not set" even after adding to .env
+**Cause:** `_API_KEY = os.environ.get(...)` at module level runs before `load_dotenv()`.  
+**Fix:** Use lazy function `_api_key()` that reads `os.environ.get()` at call time. Also load dotenv inside `tryon.py` itself.
 
-```bash
-pip install -r spaces/requirements.txt
-streamlit run spaces/app.py
-```
+### PostgreSQL port conflict (5432 already in use)
+**Fix:** Use port `5433:5432` in docker-compose.yml (macOS Homebrew already uses 5432).
 
-**Deploy free on Streamlit Cloud:**
-1. Fork this repo
-2. Go to [share.streamlit.io](https://share.streamlit.io)
-3. Connect repo → set main file: `spaces/app.py` → Deploy
-
----
-
-## macOS ARM64 Notes
-
-SAM2 and MediaPipe cause SIGABRT crashes on macOS ARM64 when imported in the main process. VirtualFit handles this automatically:
-
-- `segment_person()` runs in an isolated subprocess
-- `measure_body()` returns safe default values
-- The try-on pipeline works fully without these models
+### uv sync — correct way to install/remove packages
+Always use `uv sync` after updating `pyproject.toml` — never `pip install` directly.
 
 ---
 
 ## Built By
 
-**Donia Batool** — Full-stack AI systems, polyglot architecture
+**Donia Batool** — Full-stack AI systems
 
 ---
 

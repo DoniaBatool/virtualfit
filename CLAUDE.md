@@ -55,33 +55,28 @@ User apni photo upload kare aur virtually kuch bhi try-on kar sake — YouCam (P
 
 ---
 
-## Polyglot Architecture — Why Each Language
+## Architecture
 
 ```
 User Browser
      ↓
-Next.js Dashboard (:3002)        ← TypeScript — rich UI, SSR, image optimization
+Next.js Dashboard (Vercel)       ← TypeScript — UI, landing page, try-on, wardrobe
+     ↓ NEXT_PUBLIC_GATEWAY_URL
+Python ML Pipeline (Railway)     ← FastAPI — calls YouCam API, saves results
      ↓
-Go Gateway (:3004)               ← Go Fiber — auth, routing, rate limiting (10k req/s)
-     ↓ (DAPR pub/sub)
-     ├── Rust Image Processor (:8090)   ← Rust Axum — fast resize/compress before ML
-     └── Python ML Pipeline (:8001)     ← Python FastAPI — PyTorch, TensorFlow, DensePose
-              ↓
-         Databases:
-         ├── PostgreSQL (NeonDB)   ← users, wardrobe saves, garment metadata
-         ├── Redis                 ← cache processed try-on results
-         ├── Qdrant                ← garment vector search (semantic: "red casual shirt")
-         └── MinIO                 ← image storage (S3-compatible, local)
+Perfect Corp YouCam API (cloud)  ← AI inference — clothes, bag, makeup, eyes, hat, shoes
+     ↓
+MinIO (local Docker)             ← result image storage (S3-compatible)
 ```
 
-### Why this split?
-- **Rust** for image preprocessing: 10x faster than Python PIL/OpenCV for resize/compress
-- **Python** for ML pipeline: FastAPI service that calls YouCam REST API + stores results
-- **Go** for gateway: handles 10,000+ concurrent requests; Python can't
-- **TypeScript/Next.js** for frontend: type safety + built-in image optimization
+### Stack
+- **Next.js 15** — frontend (Vercel)
+- **Python FastAPI** — backend ML pipeline (Railway)
+- **YouCam API** — all AI inference (Perfect Corp cloud, no local GPU)
+- **MinIO** — image storage (local Docker, optional)
 
-> ⚠️ **No local ML models.** CatVTON / IDM-VTON / SAM2 / MediaPipe / Qiskit / TensorFlow have all been removed.
-> All inference runs on Perfect Corp's cloud via YouCam API. No torch/diffusers needed.
+> ⚠️ **No local ML models, no Go, no Rust, no Redis, no Qdrant, no Redpanda.**
+> YouCam cloud handles all AI. Project is intentionally minimal and deployable.
 
 ---
 
