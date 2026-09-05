@@ -1,78 +1,60 @@
 """
-Virtual Try-On ML Pipeline — Week 2
-FastAPI service: IDM-VTON + SAM2 + MediaPipe + TensorFlow + Qiskit
+VirtualFit ML Pipeline — YouCam Edition
+========================================
+FastAPI service: Perfect Corp YouCam API (cloud inference, no local GPU needed)
 Port: 8001
 
-All heavy models load lazily on first request (not at startup).
-MPS (Metal) auto-detected on Apple Silicon.
+Features:
+  👔  POST /api/tryon      — clothes try-on (upper / lower / full body)
+  👜  POST /api/bag        — handbag / purse try-on
+  💄  POST /api/makeup     — makeup try-on (lip color, blush, eye shadow, …)
+  👁️  POST /api/eye-color  — colored contact lens try-on
+  🎩  POST /api/hat        — hat / cap try-on
+  👟  POST /api/shoes      — footwear try-on
+  📐  POST /api/measure    — body measurements (simple estimator)
+  ❤️  GET  /health         — service readiness
 """
 
+import asyncio
 import base64
-import io
 import logging
 import os
 from contextlib import asynccontextmanager
 
-import torch
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from typing import Optional, List
 
-# ─── Week 2 modules ───────────────────────────────────────────────────────────
-# SAM2 + MediaPipe NOT imported at module level — macOS ARM64 SIGABRT
-# They are loaded lazily in subprocess only when explicitly called via /api/segment or /api/measure
-from app.tryon          import run_tryon, model_status
-from app.storage        import save_result
-from app.size_predictor import predict_size, train_and_save
-from app.quantum_search import grover_search
-
-def segment_person(image_bytes: bytes) -> dict:
-    """Subprocess-isolated SAM2 — avoids ARM64 SIGABRT in main process."""
-    import subprocess, sys, json, base64, tempfile, os
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-        f.write(image_bytes); tmp = f.name
-    try:
-        code = (
-            "import sys,json,base64; sys.path.insert(0,'.');"
-            "from app.segmentation import segment_person;"
-            f"r=segment_person(open('{tmp}','rb').read());"
-            "r['masked_image']=base64.b64encode(r['masked_image']).decode();"
-            "print(json.dumps(r))"
-        )
-        res = subprocess.run(
-            [sys.executable, "-c", code],
-            capture_output=True, text=True, timeout=60,
-            cwd=str(__file__).replace("/app/main.py","")
-        )
-        if res.returncode == 0 and res.stdout.strip():
-            d = json.loads(res.stdout.strip())
-            d["masked_image"] = base64.b64decode(d["masked_image"])
-            return d
-    except Exception as e:
-        logger.warning(f"SAM2 subprocess failed: {e}")
-    finally:
-        try: os.unlink(tmp)
-        except: pass
-    return {"masked_image": image_bytes, "mask": None, "bbox": [0,0,512,512], "score": 0.0, "fallback": True}
-
-def measure_body(image_bytes: bytes, reference_height_cm: float = 165.0) -> dict:
-    """Subprocess-isolated MediaPipe — avoids ARM64 SIGABRT in main process."""
-    return {"shoulder_cm": 40.0, "chest_cm": 90.0, "waist_cm": 75.0,
-            "hip_cm": 96.0, "height_px": 512, "px_per_cm": 3.1,
-            "confidence": 0.0, "fallback": True}
-
-def recommend_size(measurements: dict, brand_chart=None) -> str:
-    chest = measurements.get("chest_cm", 90)
-    if chest < 82: return "XS"
-    if chest < 88: return "S"
-    if chest < 96: return "M"
-    if chest < 104: return "L"
-    if chest < 112: return "XL"
-    return "XXL"
+from app.tryon import (
+    run_tryon,
+    run_clothes_tryon,
+    run_bag_tryon,
+    run_makeup_tryon,
+    run_eye_color_tryon,
+    run_hat_tryon,
+    run_shoes_tryon,
+    model_status,
+    MAKEUP_PRESETS,
+    EYE_COLOR_PRESETS,
+)
+from app.storage import save_result
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s  %(message)s")
 logger = logging.getLogger(__name__)
+
+# ── Load .env from project root (picks up YOUCAM_API_KEY etc.) ───────────────
+try:
+    from dotenv import load_dotenv
+    import pathlib
+    _root = pathlib.Path(__file__).parent.parent.parent.parent
+    _env  = _root / ".env"
+    if _env.exists():
+        load_dotenv(_env)
+        logger.info(f"📄 Loaded .env from {_env}")
+except ImportError:
+    pass
 
 ALLOWED_MIME = {"image/jpeg", "image/png", "image/webp"}
 
@@ -80,14 +62,16 @@ ALLOWED_MIME = {"image/jpeg", "image/png", "image/webp"}
 # ─── Startup ──────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
-    logger.info(f"🚀 ML Pipeline starting — PyTorch device: {device}")
-    if device == "mps":
-        logger.info("🎉 Apple Silicon MPS (Metal) active — GPU inference enabled")
-
-    # Models load lazily on first request — no pre-warming at startup
-    # (avoids macOS ARM64 library crash on import)
-    logger.info("📦 Models will load on first request (lazy loading)")
+    youcam_key = os.environ.get("YOUCAM_API_KEY", "")
+    if youcam_key:
+        logger.info("✅ YOUCAM_API_KEY detected — all features ready (Perfect Corp cloud)")
+    else:
+        logger.warning(
+            "⚠️  YOUCAM_API_KEY not set!\n"
+            "   All try-on features require this key.\n"
+            "   Register free at: https://yce.makeupar.com/ai-api\n"
+            "   Then add to .env:  YOUCAM_API_KEY=your_key_here"
+        )
     yield
     logger.info("👋 ML Pipeline shutting down")
 
@@ -95,8 +79,11 @@ async def lifespan(app: FastAPI):
 # ─── App ──────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="VirtualFit ML Pipeline",
-    description="IDM-VTON · SAM2 · MediaPipe · TensorFlow · Qiskit",
-    version="2.0.0",
+    description=(
+        "YouCam AI (Perfect Corp) — photorealistic virtual try-on in the cloud.\n\n"
+        "Supports: 👔 Clothes · 👜 Bag · 💄 Makeup · 👁️ Eye Color · 🎩 Hat · 👟 Shoes"
+    ),
+    version="3.0.0",
     lifespan=lifespan,
 )
 
@@ -122,105 +109,48 @@ def _b64(image_bytes: bytes) -> str:
     return base64.b64encode(image_bytes).decode()
 
 
+def _err(e: Exception, status_code: int = 500):
+    msg = str(e)
+    logger.error(f"Pipeline error: {msg}")
+    if "YOUCAM_API_KEY" in msg:
+        raise HTTPException(503, detail="YouCam API key not configured. See /health for instructions.")
+    raise HTTPException(status_code, detail=msg)
+
+
 # ─── Health ───────────────────────────────────────────────────────────────────
 @app.get("/health")
 async def health():
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
     return {
-        "status":        "ok",
-        "service":       "ml-pipeline",
-        "version":       "2.0.0",
-        "port":          8001,
-        "torch_device":  device,
-        "torch_version": torch.__version__,
-        "tryon_model":   model_status(),
+        "status":   "ok",
+        "service":  "ml-pipeline",
+        "version":  "3.0.0",
+        "port":     8001,
+        **model_status(),
     }
 
 
-# ─── /api/segment — SAM2 person segmentation ─────────────────────────────────
-@app.post("/api/segment")
-async def segment(person_image: UploadFile = File(...)):
-    """
-    Remove background from a person photo using SAM2.
-
-    Returns:
-        - masked_image_b64: RGBA PNG (background transparent), base64 encoded
-        - bbox: [x1, y1, x2, y2] tight crop around person
-        - score: SAM2 mask confidence
-        - fallback: true if SAM2 model wasn't available
-    """
-    _validate_image(person_image, "person_image")
-    image_bytes = await person_image.read()
-
-    result = segment_person(image_bytes)
-
-    return {
-        "masked_image_b64": _b64(result["masked_image"]),
-        "bbox":             result["bbox"],
-        "score":            result["score"],
-        "fallback":         result["fallback"],
-    }
-
-
-# ─── /api/measure — MediaPipe body measurements ───────────────────────────────
-@app.post("/api/measure")
-async def measure(
-    person_image: UploadFile = File(...),
-    height_cm: float = Query(default=165.0, ge=100.0, le=220.0,
-                             description="Person's real height in cm (used for pixel→cm calibration)"),
-):
-    """
-    Estimate body measurements from a full-body photo.
-
-    Requires:
-        - person_image: full-body photo, person facing camera, neutral pose
-        - height_cm: actual or estimated height for cm conversion (default 165)
-
-    Returns:
-        - shoulder_cm, chest_cm, waist_cm, hip_cm
-        - recommended_size: XS/S/M/L/XL/XXL
-        - confidence: landmark visibility score (0–1)
-        - fallback: true if MediaPipe wasn't available
-    """
-    _validate_image(person_image, "person_image")
-    image_bytes = await person_image.read()
-
-    result = measure_body(image_bytes, reference_height_cm=height_cm)
-    size   = recommend_size(result)
-
-    return {
-        **result,
-        "recommended_size": size,
-        "height_input_cm":  height_cm,
-    }
-
-
-# ─── /api/tryon — IDM-VTON virtual try-on ────────────────────────────────────
+# ─── 👔 Clothes Try-On ────────────────────────────────────────────────────────
 @app.post("/api/tryon")
 async def try_on(
-    person_image:  UploadFile = File(...),
-    garment_image: UploadFile = File(...),
-    steps:         int   = Query(default=30, ge=10, le=50,
-                                 description="Diffusion steps (30=fast, 50=quality)"),
-    guidance:      float = Query(default=2.0, ge=1.0, le=7.5,
-                                 description="Classifier-free guidance scale"),
-    height_cm:     float = Query(default=165.0, ge=100.0, le=220.0),
-    save_to_minio: bool  = Query(default=True),
+    person_image:  UploadFile = File(..., description="Full-body person photo"),
+    garment_image: UploadFile = File(..., description="Clothing item photo"),
+    category:      str        = Query(
+        default="upper_body",
+        description="Garment category: upper_body | lower_body | full_body",
+    ),
+    save_to_minio: bool = Query(default=True),
 ):
     """
-    Full virtual try-on pipeline:
-    1. SAM2 → segment person (remove background)
-    2. MediaPipe → body measurements + size recommendation
-    3. IDM-VTON → generate try-on image
-    4. MinIO → store result
+    Virtual clothing try-on powered by YouCam AI.
+
+    Upload a person photo and a clothing item photo.
+    YouCam places the garment realistically onto the person.
 
     Returns:
-        - result_image_b64: JPEG try-on result, base64 encoded
-        - result_url: MinIO URL (if save_to_minio=true and MinIO is running)
-        - inference_time_s: model inference time
-        - measurements: body measurements from step 2
-        - recommended_size: XS/S/M/L/XL/XXL
-        - mode: "local" (IDM-VTON) | "fallback" (composite overlay)
+        - result_image_b64: try-on result as base64 JPEG
+        - result_url: MinIO storage URL (if MinIO is running)
+        - inference_time_s: total round-trip time
+        - mode: always "youcam_clothes"
     """
     _validate_image(person_image,  "person_image")
     _validate_image(garment_image, "garment_image")
@@ -228,145 +158,335 @@ async def try_on(
     person_bytes  = await person_image.read()
     garment_bytes = await garment_image.read()
 
-    # ── Step 1: Segment person (skip on macOS ARM64 — SIGABRT risk) ──────────
-    mask_bytes = None  # safe default; IDM-VTON fallback works without mask
+    try:
+        loop   = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, run_clothes_tryon, person_bytes, garment_bytes, category
+        )
+    except Exception as e:
+        _err(e)
 
-    # ── Step 2: Body measurements (skip on macOS ARM64 — SIGABRT risk) ───────
-    measurements = {"fallback": True, "shoulder_cm": 40.0, "chest_cm": 90.0,
-                    "waist_cm": 75.0, "hip_cm": 96.0}
-    size = "M"
-
-    # ── Step 3: IDM-VTON try-on ───────────────────────────────────────────────
-    tryon_result = run_tryon(
-        person_bytes=person_bytes,
-        garment_bytes=garment_bytes,
-        person_mask_bytes=mask_bytes,
-        num_inference_steps=steps,
-        guidance_scale=guidance,
-    )
-
-    # ── Step 4: Store to MinIO ────────────────────────────────────────────────
     result_url = None
     if save_to_minio:
-        result_url = save_result(tryon_result["result_image"])
+        try:
+            result_url = save_result(result["result_image"])
+        except Exception:
+            pass
 
     return {
-        "result_image_b64": _b64(tryon_result["result_image"]),
-        "result_url":        result_url,
-        "inference_time_s":  tryon_result["inference_time_s"],
-        "measurements":      measurements,
-        "recommended_size":  size,
-        "mode":              tryon_result["mode"],
-        "device":            tryon_result.get("device"),
-        "note":              tryon_result.get("note"),
+        "result_image_b64": _b64(result["result_image"]),
+        "result_url":       result_url,
+        "inference_time_s": result["inference_time_s"],
+        "mode":             result["mode"],
+        "device":           result["device"],
+        "category":         result.get("category"),
     }
 
 
-# ─── /api/tryon/status — pipeline readiness ──────────────────────────────────
+# ─── /api/tryon/status ────────────────────────────────────────────────────────
 @app.get("/api/tryon/status")
 async def tryon_status():
-    """Check which inference mode is active and what's needed to upgrade."""
+    """Available features and API key status."""
     return model_status()
 
 
-# ─── /api/recommend-size — standalone size recommendation ────────────────────
-class MeasurementInput(BaseModel):
-    shoulder_cm: float = 38.5
-    chest_cm:    float = 88.0
-    waist_cm:    float = 70.0
-    hip_cm:      float = 94.0
+# ─── 👜 Bag Try-On ────────────────────────────────────────────────────────────
+BAG_STYLES = ["random", "style_parisian_chic", "style_urban_chic",
+              "style_mediterranean_chic", "style_art_deco_style"]
 
+@app.post("/api/bag")
+async def bag_tryon(
+    person_image: UploadFile = File(..., description="Full-body person photo"),
+    bag_image:    UploadFile = File(..., description="Handbag / purse photo"),
+    gender: str = Query(default="female", description="male | female"),
+    style:  str = Query(
+        default="random",
+        description="Style preset: random | style_parisian_chic | style_urban_chic | "
+                    "style_mediterranean_chic | style_art_deco_style",
+    ),
+    save_to_minio: bool = Query(default=True),
+):
+    """
+    Virtual handbag / purse try-on.
 
-@app.post("/api/recommend-size")
-async def recommend_size_endpoint(body: MeasurementInput):
+    YouCam places the bag realistically on or beside the person.
+
+    Style presets choose the pose / scene aesthetic:
+    - random: let YouCam choose
+    - style_parisian_chic: elegant Parisian look
+    - style_urban_chic: modern city style
+    - style_mediterranean_chic: warm Mediterranean vibes
+    - style_art_deco_style: bold geometric aesthetic
     """
-    Predict clothing size using TF Dense Network (Week 3).
-    Auto-trains on first call if no saved model (~30 seconds).
-    """
-    result = predict_size(
-        shoulder_cm=body.shoulder_cm,
-        chest_cm=body.chest_cm,
-        waist_cm=body.waist_cm,
-        hip_cm=body.hip_cm,
-    )
+    _validate_image(person_image, "person_image")
+    _validate_image(bag_image,    "bag_image")
+
+    if style not in BAG_STYLES:
+        raise HTTPException(422, f"style must be one of: {BAG_STYLES}")
+
+    person_bytes = await person_image.read()
+    bag_bytes    = await bag_image.read()
+
+    try:
+        loop   = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, run_bag_tryon, person_bytes, bag_bytes, gender, style
+        )
+    except Exception as e:
+        _err(e)
+
+    result_url = None
+    if save_to_minio:
+        try:
+            result_url = save_result(result["result_image"])
+        except Exception:
+            pass
+
     return {
-        **result,
-        "measurements": body.model_dump(),
-        "model": "TF Dense Network (3-layer, trained on synthetic size data)",
+        "result_image_b64": _b64(result["result_image"]),
+        "result_url":       result_url,
+        "inference_time_s": result["inference_time_s"],
+        "mode":             result["mode"],
+        "device":           result["device"],
     }
 
 
-# ─── /api/train-size-model — trigger TF training ─────────────────────────────
-@app.post("/api/train-size-model")
-async def train_size_model():
-    """Manually trigger TF size predictor training (runs in ~30s on M2 Max)."""
-    import asyncio
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, train_and_save)
-    return {"status": "trained", "model_path": "checkpoints/size_predictor.keras"}
+# ─── 💄 Makeup Try-On ────────────────────────────────────────────────────────
+class MakeupRequest(BaseModel):
+    preset:         str        = "natural"  # key from MAKEUP_PRESETS
+    custom_effects: Optional[List[dict]] = None  # raw YouCam effects list
 
 
-# ─── /api/quantum-match — Qiskit Grover's search ─────────────────────────────
-@app.get("/api/quantum-match")
-async def quantum_match(
-    body_type: str = Query(default="athletic",
-                           description="lean | athletic | curvy | petite | all"),
-    category:  str = Query(default="shirt",
-                           description="shirt | blazer | dress | jacket | pants | hoodie | sweater | skirt"),
-    top_k:     int = Query(default=5, ge=1, le=10),
+@app.post("/api/makeup")
+async def makeup_tryon(
+    person_image:  UploadFile = File(..., description="Face / portrait photo"),
+    preset:        str        = Query(
+        default="natural",
+        description="Makeup preset: natural | glam | bold_lips | smoky_eye",
+    ),
+    save_to_minio: bool = Query(default=True),
 ):
     """
-    Qiskit Grover's O(√N) quantum search through garment catalog.
-    Returns top_k matches with quantum probability scores.
+    Virtual makeup try-on.
+
+    Available presets:
+    - natural     : subtle blush + glossy nude lips + skin smoothing
+    - glam        : red smoky eye + bold blush + matte red lips
+    - bold_lips   : deep berry matte lips + skin smoothing
+    - smoky_eye   : black smoky eye + deep red lips
+
+    For custom makeup, use POST /api/makeup/custom with a raw YouCam effects list.
     """
-    import asyncio
-    loop   = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, grover_search, body_type, category, top_k)
-    return result
+    _validate_image(person_image, "person_image")
+
+    if preset not in MAKEUP_PRESETS:
+        raise HTTPException(422, f"preset must be one of: {list(MAKEUP_PRESETS.keys())}")
+
+    person_bytes = await person_image.read()
+
+    try:
+        loop   = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, run_makeup_tryon, person_bytes, preset, None
+        )
+    except Exception as e:
+        _err(e)
+
+    result_url = None
+    if save_to_minio:
+        try:
+            result_url = save_result(result["result_image"])
+        except Exception:
+            pass
+
+    return {
+        "result_image_b64": _b64(result["result_image"]),
+        "result_url":       result_url,
+        "inference_time_s": result["inference_time_s"],
+        "mode":             result["mode"],
+        "preset":           result.get("preset"),
+        "device":           result["device"],
+    }
+
+
+# ─── 👁️ Eye Color Try-On ─────────────────────────────────────────────────────
+@app.post("/api/eye-color")
+async def eye_color_tryon(
+    person_image:  UploadFile = File(..., description="Portrait / face photo"),
+    color:         str        = Query(
+        default="blue",
+        description=(
+            "Color preset (blue, green, gray, hazel, violet, amber, ice_blue, honey) "
+            "OR a hex color like #2E86AB"
+        ),
+    ),
+    save_to_minio: bool = Query(default=True),
+):
+    """
+    Virtual colored contact lens try-on.
+
+    Color presets: blue · green · gray · hazel · violet · amber · ice_blue · honey
+    Or pass any hex color: #2E86AB, #8B6914, etc.
+    """
+    _validate_image(person_image, "person_image")
+
+    person_bytes = await person_image.read()
+
+    try:
+        loop   = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, run_eye_color_tryon, person_bytes, color
+        )
+    except Exception as e:
+        _err(e)
+
+    result_url = None
+    if save_to_minio:
+        try:
+            result_url = save_result(result["result_image"])
+        except Exception:
+            pass
+
+    return {
+        "result_image_b64": _b64(result["result_image"]),
+        "result_url":       result_url,
+        "inference_time_s": result["inference_time_s"],
+        "mode":             result["mode"],
+        "color":            result.get("color"),
+        "device":           result["device"],
+    }
+
+
+# ─── 🎩 Hat Try-On ───────────────────────────────────────────────────────────
+@app.post("/api/hat")
+async def hat_tryon(
+    person_image: UploadFile = File(..., description="Person photo (head visible)"),
+    hat_image:    UploadFile = File(..., description="Hat / cap photo"),
+    save_to_minio: bool = Query(default=True),
+):
+    """Virtual hat / cap try-on powered by YouCam AI."""
+    _validate_image(person_image, "person_image")
+    _validate_image(hat_image,    "hat_image")
+
+    person_bytes = await person_image.read()
+    hat_bytes    = await hat_image.read()
+
+    try:
+        loop   = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, run_hat_tryon, person_bytes, hat_bytes
+        )
+    except Exception as e:
+        _err(e)
+
+    result_url = None
+    if save_to_minio:
+        try:
+            result_url = save_result(result["result_image"])
+        except Exception:
+            pass
+
+    return {
+        "result_image_b64": _b64(result["result_image"]),
+        "result_url":       result_url,
+        "inference_time_s": result["inference_time_s"],
+        "mode":             result["mode"],
+        "device":           result["device"],
+    }
+
+
+# ─── 👟 Shoes Try-On ─────────────────────────────────────────────────────────
+@app.post("/api/shoes")
+async def shoes_tryon(
+    person_image:  UploadFile = File(..., description="Full-body person photo (feet visible)"),
+    shoes_image:   UploadFile = File(..., description="Shoe / footwear photo"),
+    save_to_minio: bool = Query(default=True),
+):
+    """Virtual footwear try-on powered by YouCam AI."""
+    _validate_image(person_image, "person_image")
+    _validate_image(shoes_image,  "shoes_image")
+
+    person_bytes = await person_image.read()
+    shoes_bytes  = await shoes_image.read()
+
+    try:
+        loop   = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, run_shoes_tryon, person_bytes, shoes_bytes
+        )
+    except Exception as e:
+        _err(e)
+
+    result_url = None
+    if save_to_minio:
+        try:
+            result_url = save_result(result["result_image"])
+        except Exception:
+            pass
+
+    return {
+        "result_image_b64": _b64(result["result_image"]),
+        "result_url":       result_url,
+        "inference_time_s": result["inference_time_s"],
+        "mode":             result["mode"],
+        "device":           result["device"],
+    }
+
+
+# ─── 📐 Body Measure (simple rule-based) ─────────────────────────────────────
+def _recommend_size(chest_cm: float) -> str:
+    if chest_cm < 82: return "XS"
+    if chest_cm < 88: return "S"
+    if chest_cm < 96: return "M"
+    if chest_cm < 104: return "L"
+    if chest_cm < 112: return "XL"
+    return "XXL"
+
+
+@app.post("/api/measure")
+async def measure(
+    person_image: UploadFile = File(...),
+    height_cm:    float      = Query(default=165.0, ge=100.0, le=220.0),
+):
+    """
+    Simple body measurement endpoint.
+    Returns estimated measurements + size recommendation.
+    Note: uses rule-based fallback (no local ML model required).
+    """
+    _validate_image(person_image, "person_image")
+    measurements = {
+        "shoulder_cm": 40.0, "chest_cm": 90.0,
+        "waist_cm": 75.0, "hip_cm": 96.0,
+        "note": "rule-based estimate — upload real measurements for accuracy",
+    }
+    return {
+        **measurements,
+        "recommended_size": _recommend_size(measurements["chest_cm"]),
+        "height_input_cm":  height_cm,
+        "fallback": True,
+    }
 
 
 # ─── DAPR subscriber ─────────────────────────────────────────────────────────
 @app.get("/dapr/subscribe")
 async def dapr_subscribe():
-    """DAPR subscription list."""
-    return [
-        {
-            "pubsubname": "pubsub",
-            "topic":      "images.ready",
-            "route":      "/api/process-images",
-        }
-    ]
+    return [{"pubsubname": "pubsub", "topic": "images.ready", "route": "/api/process-images"}]
 
 
 @app.post("/api/process-images")
 async def process_images(event: dict):
-    """
-    DAPR CloudEvent from Rust image-processor.
-    Triggered after image upload + resize is complete.
-
-    Expected event.data:
-    {
-        "request_id": "uuid",
-        "person_image_url": "http://minio:9000/...",
-        "garment_image_url": "http://minio:9000/...",
-        "height_cm": 165.0
-    }
-    """
-    import asyncio, httpx
-
+    """DAPR CloudEvent from Rust image-processor."""
+    import httpx
     logger.info(f"📨 DAPR event: {event.get('type')} id={event.get('id')}")
 
-    data       = event.get("data", {})
-    request_id = data.get("request_id", "unknown")
-    person_url = data.get("person_image_url")
-    garment_url= data.get("garment_image_url")
-    height_cm  = float(data.get("height_cm", 165.0))
+    data        = event.get("data", {})
+    request_id  = data.get("request_id", "unknown")
+    person_url  = data.get("person_image_url")
+    garment_url = data.get("garment_image_url")
 
     if not person_url or not garment_url:
-        logger.warning("Missing image URLs in event — skipping pipeline")
         return {"status": "skipped", "reason": "missing_urls"}
 
-    # ── Download images from MinIO ────────────────────────────────────────────
     async with httpx.AsyncClient(timeout=30.0) as client:
         person_resp  = await client.get(person_url)
         garment_resp = await client.get(garment_url)
@@ -374,56 +494,24 @@ async def process_images(event: dict):
     person_bytes  = person_resp.content
     garment_bytes = garment_resp.content
 
-    # ── Run full ML pipeline (in thread pool — blocking ops) ─────────────────
-    loop = asyncio.get_event_loop()
+    loop         = asyncio.get_event_loop()
+    tryon_result = await loop.run_in_executor(None, run_tryon, person_bytes, garment_bytes)
+    result_url   = save_result(tryon_result["result_image"], prefix=f"results/{request_id}/")
 
-    seg_result   = await loop.run_in_executor(None, segment_person, person_bytes)
-    measurements = await loop.run_in_executor(None, measure_body, person_bytes, height_cm)
-    size         = recommend_size(measurements)
-
-    tf_result    = predict_size(
-        shoulder_cm=measurements["shoulder_cm"],
-        chest_cm=measurements["chest_cm"],
-        waist_cm=measurements["waist_cm"],
-        hip_cm=measurements["hip_cm"],
-        height_cm=height_cm,
-    )
-
-    tryon_result = await loop.run_in_executor(
-        None, run_tryon,
-        person_bytes, garment_bytes, seg_result["masked_image"]
-    )
-
-    # ── Save result to MinIO ──────────────────────────────────────────────────
-    result_url = save_result(tryon_result["result_image"], prefix=f"results/{request_id}/")
-
-    # ── Publish tryon.complete event via DAPR ─────────────────────────────────
     dapr_port = os.getenv("DAPR_HTTP_PORT", "3501")
-    publish_payload = {
-        "request_id":       request_id,
-        "result_url":       result_url,
-        "measurements":     measurements,
-        "recommended_size": tf_result["predicted_size"],
-        "fit_score":        tf_result["fit_score"],
-        "inference_time_s": tryon_result["inference_time_s"],
-        "mode":             tryon_result["mode"],
-    }
     try:
         async with httpx.AsyncClient() as client:
             await client.post(
                 f"http://localhost:{dapr_port}/v1.0/publish/pubsub/tryon.complete",
-                json=publish_payload,
+                json={
+                    "request_id":       request_id,
+                    "result_url":       result_url,
+                    "inference_time_s": tryon_result["inference_time_s"],
+                    "mode":             tryon_result["mode"],
+                },
                 timeout=5.0,
             )
-        logger.info(f"📤 Published tryon.complete for request {request_id}")
     except Exception as e:
-        logger.warning(f"DAPR publish failed (non-blocking): {e}")
+        logger.warning(f"DAPR publish failed: {e}")
 
-    return {
-        "status":           "processed",
-        "request_id":       request_id,
-        "result_url":       result_url,
-        "recommended_size": tf_result["predicted_size"],
-        "fit_score":        tf_result["fit_score"],
-        "mode":             tryon_result["mode"],
-    }
+    return {"status": "processed", "request_id": request_id, "result_url": result_url}

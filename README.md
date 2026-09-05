@@ -1,20 +1,23 @@
 # 👗 VirtualFit — AI Virtual Try-On System
 
-> Polyglot AI system: upload your photo + any garment → see yourself wearing it instantly.
+> Polyglot AI system: upload your photo → see yourself wearing clothes, bags, makeup, colored contacts, hats, and shoes instantly.
 
-**Live Demo:** [Streamlit Cloud](https://share.streamlit.io) · **Stack:** Rust · Go · Python · Next.js 15
+**Stack:** Rust · Go · Python · TypeScript/Next.js 15 · **AI:** Cloud-based ML inference via Perfect Corp YouCam API, with custom multi-feature try-on pipeline built on top.
 
 ---
 
 ## What It Does
 
-VirtualFit is a full-stack AI virtual try-on platform built with 5 different technologies working together:
+VirtualFit is a full-stack AI virtual try-on platform built with 4 different technologies working together:
 
-- **Upload** your full-body photo and any garment image
-- **AI Try-On** overlays the garment on your photo using IDM-VTON (CVPR 2024 diffusion model)
-- **Body Measurements** estimated automatically from your photo (shoulder, chest, waist, hip)
-- **Size Recommendation** powered by a TensorFlow neural network
-- **Quantum Search** finds matching garments using Qiskit Grover's O(√N) algorithm
+- 👔 **Clothes Try-On** — shirt, dress, jacket, pants (upper / lower / full body)
+- 👜 **Bag Try-On** — handbag / purse with style presets (Parisian Chic, Urban Chic, Art Deco…)
+- 💄 **Makeup Try-On** — lip color, blush, eye shadow (presets: Natural, Glam, Bold Lips, Smoky Eye)
+- 👁️ **Eye Color Try-On** — colored contact lenses (8 presets + custom hex color picker)
+- 🎩 **Hat Try-On** — hats and caps
+- 👟 **Shoes Try-On** — any footwear
+
+All AI inference runs on **Perfect Corp's cloud** (YouCam API) — photorealistic results, no local GPU needed.
 
 ---
 
@@ -55,16 +58,17 @@ VirtualFit is a full-stack AI virtual try-on platform built with 5 different tec
 
 ## AI / ML Stack
 
-| Component | Technology | Details |
+| Feature | API Endpoint | Details |
 |---|---|---|
-| Virtual Try-On | **IDM-VTON** (CVPR 2024) | Diffusion model, 9GB weights |
-| Person Segmentation | **SAM2.1-Hiera-Large** | Meta's segment anything model |
-| Body Pose | **MediaPipe PoseLandmarker** | Google, Heavy variant |
-| Size Prediction | **TensorFlow** Dense Network | 3-layer, trained on synthetic data |
-| Garment Search | **Qiskit Grover's O(√N)** | 4-qubit, 16-garment catalog |
-| GPU Inference | **TensorFlow Metal** | Apple Silicon MPS acceleration |
+| 👔 Clothes Try-On | YouCam `/task/cloth-v4` | Photorealistic garment fitting |
+| 👜 Bag Try-On | YouCam `/task/bag` | 5 style presets, gender-aware |
+| 💄 Makeup Try-On | YouCam `/task/makeup-vto` | Lips, blush, eye shadow, foundation |
+| 👁️ Eye Color | YouCam `/task/eye-color-lens` | 8 presets + custom hex color |
+| 🎩 Hat Try-On | YouCam `/task/hat` | Head-aware placement |
+| 👟 Shoes Try-On | YouCam `/task/shoes` | Full-body foot detection |
 
-> **Fast Preview mode:** When IDM-VTON weights are not downloaded, the system falls back to a PIL composite overlay (instant, no GPU needed).
+**Provider:** [Perfect Corp YouCam API](https://yce.makeupar.com/ai-api) — register free, get API key, add to `.env`  
+**No local GPU required** — all inference on Perfect Corp's cloud (A100s).
 
 ---
 
@@ -83,15 +87,10 @@ virtualfit/
 │   ├── gateway/            # Go Fiber v3 API gateway
 │   ├── ml-pipeline/        # Python FastAPI ML service
 │   │   ├── app/
-│   │   │   ├── main.py         # FastAPI app + endpoints
-│   │   │   ├── tryon.py        # IDM-VTON integration
-│   │   │   ├── segmentation.py # SAM2 person segmentation
-│   │   │   ├── measurements.py # MediaPipe body measurements
-│   │   │   ├── size_predictor.py # TensorFlow size model
-│   │   │   ├── quantum_search.py # Qiskit Grover's algorithm
+│   │   │   ├── main.py         # FastAPI app + all 6 try-on endpoints
+│   │   │   ├── tryon.py        # YouCam API integration (all features)
 │   │   │   └── storage.py      # MinIO integration
-│   │   └── scripts/
-│   │       └── download_models.py # One-time model download
+│   │   └── pyproject.toml      # Lightweight deps (no torch/qiskit)
 │   └── image-processor/    # Rust Axum image processing
 ├── spaces/                 # Streamlit Cloud deployment
 │   ├── app.py              # Streamlit app (3 tabs)

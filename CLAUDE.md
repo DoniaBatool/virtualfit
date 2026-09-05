@@ -1,7 +1,7 @@
 # Virtual Try-On System — CLAUDE.md
 
-**Last Updated:** 2026-09-03  
-**Status:** Week 2 — ML Pipeline (IDM-VTON + SAM2 + MediaPipe)
+**Last Updated:** 2026-09-05  
+**Status:** Week 3 — YouCam API (cloud inference, no local GPU needed)
 
 > 📋 **Is project ka full roadmap:** [`PLAN.md`](./PLAN.md) — har session mein yahan se start karo. PLAN.md mein week-by-week checklist, architecture, data flow, aur all commands hain.
 
@@ -35,15 +35,23 @@
 
 ## What This Project Does
 
-User apni photo upload kare ya webcam use kare, aur virtually kisi bhi garment ko apne body pe try-on kar sake.
+User apni photo upload kare aur virtually kuch bhi try-on kar sake — YouCam (Perfect Corp) cloud API se photorealistic results.
 
-- **DensePose** se exact body shape detect hoti hai (shoulder, waist, hip measurements)
-- **PyTorch GAN** (VITON-HD style) se cloth warping hoti hai — garment body shape pe fit hota hai
-- **TensorFlow** se size recommendation hoti hai (S/M/L/XL + fit %)
-- **Qiskit** Grover's algorithm se 1000s garments mein se best match dhundha jaata hai
-- **Next.js dashboard** se virtual fitting room experience milta hai
+- **👔 Clothes** — upper / lower / full body garment try-on (shirts, dresses, pants, jackets)
+- **👜 Bag** — handbag / purse try-on with style presets (Parisian Chic, Urban Chic, etc.)
+- **💄 Makeup** — lip color, blush, eye shadow, foundation (presets: Natural, Glam, Bold Lips, Smoky Eye)
+- **👁️ Eye Color** — colored contact lens try-on (8 presets + custom hex color picker)
+- **🎩 Hat** — hat / cap try-on
+- **👟 Shoes** — footwear try-on
+- **Next.js dashboard** se feature-tabbed virtual fitting room UI
 
+**No local GPU needed.** YouCam API handles all inference in the cloud.  
 **Industry relevance:** Zara, Amazon, Daraz jaise e-commerce platforms ke liye
+
+### YouCam API Setup (REQUIRED)
+1. Register at: https://yce.makeupar.com/ai-api (free tier available)
+2. Get your API key
+3. Add to `.env`:  `YOUCAM_API_KEY=your_key_here`
 
 ---
 
@@ -68,9 +76,12 @@ Go Gateway (:3004)               ← Go Fiber — auth, routing, rate limiting (
 
 ### Why this split?
 - **Rust** for image preprocessing: 10x faster than Python PIL/OpenCV for resize/compress
-- **Python** for ML: PyTorch, TensorFlow, DensePose libraries only exist in Python
+- **Python** for ML pipeline: FastAPI service that calls YouCam REST API + stores results
 - **Go** for gateway: handles 10,000+ concurrent requests; Python can't
 - **TypeScript/Next.js** for frontend: type safety + built-in image optimization
+
+> ⚠️ **No local ML models.** CatVTON / IDM-VTON / SAM2 / MediaPipe / Qiskit / TensorFlow have all been removed.
+> All inference runs on Perfect Corp's cloud via YouCam API. No torch/diffusers needed.
 
 ---
 

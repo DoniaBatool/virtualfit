@@ -1,328 +1,469 @@
 """
-Week 2 — IDM-VTON Virtual Try-On Inference
-Uses yisol/IDM-VTON (CVPR 2024) — best open-source VTON model.
+VirtualFit — YouCam API (Perfect Corp) Multi-Feature Try-On
+============================================================
+All inference runs in Perfect Corp's cloud — no local ML models needed.
 
-Two-path architecture:
-  ① Local: Load from vendor/IDM-VTON/ (after git clone — ~6 GB download)
-  ② Fallback: Composite overlay (PIL-based, instant, no download needed)
+Features:
+  👔 Clothes  — upper / lower / full body clothing try-on
+  👜 Bag      — handbag / purse try-on
+  💄 Makeup   — lip color, blush, eye shadow, eyeliner, foundation
+  👁️ Eye Color — colored contact lens try-on
+  🎩 Hat      — hat / cap try-on
+  👟 Shoes    — footwear try-on
 
-Setup command (run once, ~12 GB total):
-    cd services/ml-pipeline
-    git clone https://huggingface.co/spaces/yisol/IDM-VTON vendor/IDM-VTON
-    # OR for model weights only:
-    huggingface-cli download yisol/IDM-VTON --local-dir vendor/IDM-VTON-weights
-
-M2 Max GPU: MPS backend auto-detected (float16 supported from PyTorch 2.4+).
+API Docs:  https://docs.perfectcorp.com/reference
+Register:  https://yce.makeupar.com/ai-api
 """
 
 import io
 import logging
-import sys
+import os
 import time
-from pathlib import Path
 from typing import Optional
 
-import numpy as np
-from PIL import Image, ImageFilter
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-# ─── Paths ────────────────────────────────────────────────────────────────────
-_ML_DIR      = Path(__file__).parent.parent
-_VENDOR_DIR  = _ML_DIR / "vendor" / "IDM-VTON"
-_WEIGHTS_DIR = _ML_DIR / "vendor" / "IDM-VTON-weights"
+_BASE = "https://yce-api-01.makeupar.com"
 
-# ─── Lazy state ───────────────────────────────────────────────────────────────
-_pipe   = None
-_device = None
-_mode   = None   # "local" | "fallback"
-
-
-# ─── Device ───────────────────────────────────────────────────────────────────
-def _get_device() -> str:
-    import torch
-    if torch.backends.mps.is_available():
-        return "mps"
-    if torch.cuda.is_available():
-        return "cuda"
-    return "cpu"
+# Load .env so key is available even when tryon.py is imported before main.py lifespan
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    import pathlib as _pathlib
+    _env = _pathlib.Path(__file__).parent.parent.parent.parent / ".env"
+    if _env.exists():
+        _load_dotenv(_env, override=False)
+except ImportError:
+    pass
 
 
-# ─── Path A: Local IDM-VTON via vendored Space code ──────────────────────────
-def _try_load_local() -> bool:
-    """Add vendor/IDM-VTON to sys.path and load the pipeline."""
-    global _pipe, _device, _mode
+# ─── Internal helpers ─────────────────────────────────────────────────────────
 
-    if not _VENDOR_DIR.exists() and not _WEIGHTS_DIR.exists():
-        return False
+def _api_key() -> str:
+    """Read key at call time — not at import time — so dotenv always works."""
+    return os.environ.get("YOUCAM_API_KEY", "").strip()
 
-    source_dir = _VENDOR_DIR if _VENDOR_DIR.exists() else _WEIGHTS_DIR
 
-    # Inject IDM-VTON source into Python path
-    src_str = str(source_dir)
-    if src_str not in sys.path:
-        sys.path.insert(0, src_str)
+def _headers() -> dict:
+    return {"Authorization": f"Bearer {_api_key()}", "Content-Type": "application/json"}
 
-    try:
-        import torch
-        from diffusers import DDPMScheduler, AutoencoderKL
-        from transformers import CLIPTextModel, CLIPTokenizer
 
-        # IDM-VTON's own pipeline classes (inside the Space repo)
-        from src.tryon_pipeline import StableDiffusionXLInpaintPipeline as TryonPipeline
-        from src.unet_hacked_tryon import UNet2DConditionModel
-        from src.unet_hacked_garmnet import UNet2DConditionModel as GarmentUNet
-        from preprocess.humanparsing.run_parsing import Parsing
-        from preprocess.openpose.run_openpose import OpenPose
-
-        weights = str(_WEIGHTS_DIR) if _WEIGHTS_DIR.exists() else str(source_dir)
-
-        _device = _get_device()
-        dtype   = torch.float16 if _device != "cpu" else torch.float32
-
-        logger.info(f"🔄 Loading IDM-VTON on {_device} (float16={_device != 'cpu'})…")
-
-        unet = UNet2DConditionModel.from_pretrained(
-            weights, subfolder="unet", torch_dtype=dtype
-        )
-        unet_encoder = GarmentUNet.from_pretrained(
-            weights, subfolder="unet_encoder", torch_dtype=dtype
+def _check_key():
+    if not _api_key():
+        raise RuntimeError(
+            "YOUCAM_API_KEY not set.\n"
+            "Register free at https://yce.makeupar.com/ai-api\n"
+            "Then add to .env:  YOUCAM_API_KEY=your_key_here"
         )
 
-        vae = AutoencoderKL.from_pretrained(
-            "stabilityai/sd-vae-ft-mse", torch_dtype=dtype
-        )
 
-        scheduler = DDPMScheduler.from_pretrained(weights, subfolder="scheduler")
-        text_encoder    = CLIPTextModel.from_pretrained(weights, subfolder="text_encoder",    torch_dtype=dtype)
-        text_encoder_2  = CLIPTextModel.from_pretrained(weights, subfolder="text_encoder_2",  torch_dtype=dtype)
-        tokenizer       = CLIPTokenizer.from_pretrained(weights, subfolder="tokenizer")
-        tokenizer_2     = CLIPTokenizer.from_pretrained(weights, subfolder="tokenizer_2")
+def _upload(img_bytes: bytes, fname: str) -> str:
+    """Upload image bytes via YouCam File API → return file_id."""
+    import requests as req
 
-        _pipe = TryonPipeline.from_pretrained(
-            weights,
-            unet=unet,
-            unet_encoder=unet_encoder,
-            vae=vae,
-            text_encoder=text_encoder.to(_device),
-            text_encoder_2=text_encoder_2.to(_device),
-            tokenizer=tokenizer,
-            tokenizer_2=tokenizer_2,
-            scheduler=scheduler,
-            torch_dtype=dtype,
-        ).to(_device)
-
-        if _device == "mps":
-            _pipe.enable_attention_slicing()   # save VRAM on Apple Silicon
-
-        _mode = "local"
-        logger.info("✅ IDM-VTON local model ready")
-        return True
-
-    except ImportError as e:
-        logger.warning(f"IDM-VTON vendor import failed (src not found): {e}")
-        return False
-    except Exception as e:
-        logger.warning(f"IDM-VTON local load failed: {e}")
-        return False
-
-
-# ─── Load on first call ───────────────────────────────────────────────────────
-def _ensure_loaded():
-    global _mode
-    if _mode is not None:
-        return
-
-    if _try_load_local():
-        return
-
-    logger.warning(
-        "⚠️  IDM-VTON model not found. Using composite overlay fallback.\n"
-        "   To enable full inference, run:\n"
-        "   cd services/ml-pipeline\n"
-        "   git clone https://huggingface.co/spaces/yisol/IDM-VTON vendor/IDM-VTON\n"
-        "   huggingface-cli download yisol/IDM-VTON --local-dir vendor/IDM-VTON-weights"
+    r = req.post(
+        f"{_BASE}/s2s/v2.0/file",
+        headers=_headers(),
+        json={"files": [{"content_type": "image/jpg", "file_name": fname, "file_size": len(img_bytes)}]},
+        timeout=30,
     )
-    _mode = "fallback"
+    if not r.ok:
+        raise RuntimeError(f"YouCam File API {r.status_code}: {r.text[:200]}")
+
+    f       = r.json()["data"]["files"][0]
+    file_id = f["file_id"]
+    put     = f["requests"][0]
+    hdrs    = {k: str(v) for k, v in put.get("headers", {}).items()}
+    hdrs["Content-Type"] = "image/jpg"
+
+    s3r = req.put(put["url"], data=img_bytes, headers=hdrs, timeout=60)
+    if not s3r.ok:
+        raise RuntimeError(f"S3 upload {s3r.status_code}: {s3r.text[:200]}")
+
+    logger.debug(f"✅ Uploaded {fname} → file_id acquired")
+    return file_id
 
 
-# ─── Public API ───────────────────────────────────────────────────────────────
+def _poll(endpoint: str, task_id: str, timeout_s: int = 120) -> bytes:
+    """Poll YouCam task until success → return result JPEG bytes."""
+    import requests as req
+
+    for attempt in range(timeout_s // 2):
+        time.sleep(2)
+        r = req.get(f"{_BASE}{endpoint}/{task_id}", headers=_headers(), timeout=30)
+        if not r.ok:
+            logger.debug(f"Poll #{attempt+1} error {r.status_code}")
+            continue
+
+        data   = r.json().get("data", {})
+        status = data.get("task_status")
+        logger.debug(f"Poll #{attempt+1}: {status}")
+
+        if status == "success":
+            result_url = (data.get("results") or {}).get("url")
+            if not result_url:
+                raise RuntimeError(f"No result URL in response: {data}")
+            return req.get(result_url, timeout=60).content
+
+        if status in ("failed", "error"):
+            err = data.get("error") or data.get("failure_reason") or "unknown"
+            raise RuntimeError(f"YouCam task failed: {err}")
+
+    raise TimeoutError(f"YouCam task timed out after {timeout_s}s")
+
+
+def _pil_to_bytes(img: Image.Image) -> bytes:
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=92)
+    return buf.getvalue()
+
+
+# ─── Feature 1: Clothes Try-On ────────────────────────────────────────────────
+
+def run_clothes_tryon(
+    person_bytes: bytes,
+    garment_bytes: bytes,
+    category: str = "upper_body",  # "upper_body" | "lower_body" | "full_body"
+) -> dict:
+    """Virtual clothing try-on (shirt, dress, pants, jacket, full outfit)."""
+    _check_key()
+    t0 = time.time()
+    logger.info(f"👔 Clothes try-on ({category}) — uploading…")
+
+    src_id = _upload(person_bytes,  "person.jpg")
+    ref_id = _upload(garment_bytes, "garment.jpg")
+
+    import requests as req
+    r = req.post(
+        f"{_BASE}/s2s/v2.0/task/cloth-v4",
+        headers=_headers(),
+        json={"src_file_id": src_id, "ref_file_id": ref_id, "garment_category": category},
+        timeout=30,
+    )
+    if not r.ok:
+        raise RuntimeError(f"Cloth task error {r.status_code}: {r.text}")
+    task_id = r.json()["data"]["task_id"]
+    logger.info(f"👔 Task {task_id} — polling…")
+
+    result = _poll("/s2s/v2.0/task/cloth-v4", task_id)
+    return {
+        "result_image":     result,
+        "inference_time_s": round(time.time() - t0, 2),
+        "mode":             "youcam_clothes",
+        "device":           "cloud",
+        "feature":          "clothes",
+        "category":         category,
+    }
+
+
+# ─── Feature 2: Bag Try-On ───────────────────────────────────────────────────
+
+def run_bag_tryon(
+    person_bytes: bytes,
+    bag_bytes: bytes,
+    gender: str = "female",   # "male" | "female"
+    style:  str = "random",   # "random" | "style_parisian_chic" | "style_urban_chic"
+                              # "style_mediterranean_chic" | "style_art_deco_style"
+) -> dict:
+    """Virtual handbag / purse try-on."""
+    _check_key()
+    t0 = time.time()
+    logger.info(f"👜 Bag try-on ({gender}, {style}) — uploading…")
+
+    src_id = _upload(person_bytes, "person.jpg")
+    ref_id = _upload(bag_bytes,    "bag.jpg")
+
+    import requests as req
+    r = req.post(
+        f"{_BASE}/s2s/v2.0/task/bag",
+        headers=_headers(),
+        json={"src_file_id": src_id, "ref_file_id": ref_id, "gender": gender, "style": style},
+        timeout=30,
+    )
+    if not r.ok:
+        raise RuntimeError(f"Bag task error {r.status_code}: {r.text}")
+    task_id = r.json()["data"]["task_id"]
+    logger.info(f"👜 Task {task_id} — polling…")
+
+    result = _poll("/s2s/v2.0/task/bag", task_id)
+    return {
+        "result_image":     result,
+        "inference_time_s": round(time.time() - t0, 2),
+        "mode":             "youcam_bag",
+        "device":           "cloud",
+        "feature":          "bag",
+    }
+
+
+# ─── Feature 3: Makeup Try-On ────────────────────────────────────────────────
+
+# Preset makeup looks — each is a list of YouCam effect objects
+MAKEUP_PRESETS = {
+    "natural": [
+        {
+            "category": "skin_smooth",
+            "skinSmoothStrength": 45,
+            "skinSmoothColorIntensity": 35,
+        },
+        {
+            "category": "blush",
+            "pattern": {"name": "1color1"},
+            "palettes": [{"color": "#F2A090", "texture": "matte", "colorIntensity": 40}],
+        },
+        {
+            "category": "lip_color",
+            "shape": {"name": "original"},
+            "style": {"type": "full"},
+            "palettes": [{"color": "#C47070", "texture": "gloss", "colorIntensity": 60, "gloss": 55}],
+        },
+    ],
+    "glam": [
+        {
+            "category": "skin_smooth",
+            "skinSmoothStrength": 60,
+            "skinSmoothColorIntensity": 50,
+        },
+        {
+            "category": "eye_shadow",
+            "pattern": {"name": "2colors1"},
+            "palettes": [
+                {"color": "#8B0000", "texture": "shimmer", "colorIntensity": 65,
+                 "shimmerColor": "#FF6060", "shimmerIntensity": 50, "shimmerDensity": 50, "shimmerSize": 50},
+                {"color": "#4A0000", "texture": "matte",   "colorIntensity": 55},
+            ],
+        },
+        {
+            "category": "blush",
+            "pattern": {"name": "2colors6"},
+            "palettes": [
+                {"color": "#FF6B6B", "texture": "matte", "colorIntensity": 55},
+                {"color": "#E85D5D", "texture": "matte", "colorIntensity": 50},
+            ],
+        },
+        {
+            "category": "lip_color",
+            "shape": {"name": "plump"},
+            "style": {"type": "full"},
+            "palettes": [{"color": "#CC0000", "texture": "matte", "colorIntensity": 85}],
+        },
+    ],
+    "bold_lips": [
+        {
+            "category": "skin_smooth",
+            "skinSmoothStrength": 50,
+            "skinSmoothColorIntensity": 40,
+        },
+        {
+            "category": "lip_color",
+            "shape": {"name": "original"},
+            "style": {"type": "full"},
+            "palettes": [{"color": "#8B0057", "texture": "matte", "colorIntensity": 90}],
+        },
+    ],
+    "smoky_eye": [
+        {
+            "category": "skin_smooth",
+            "skinSmoothStrength": 55,
+            "skinSmoothColorIntensity": 45,
+        },
+        {
+            "category": "eye_shadow",
+            "pattern": {"name": "3colors1"},
+            "palettes": [
+                {"color": "#1A1A1A", "texture": "shimmer", "colorIntensity": 80,
+                 "shimmerColor": "#555555", "shimmerIntensity": 60, "shimmerDensity": 55, "shimmerSize": 50},
+                {"color": "#333333", "texture": "matte",   "colorIntensity": 70},
+                {"color": "#0D0D0D", "texture": "matte",   "colorIntensity": 85},
+            ],
+        },
+        {
+            "category": "blush",
+            "pattern": {"name": "1color1"},
+            "palettes": [{"color": "#C97070", "texture": "matte", "colorIntensity": 35}],
+        },
+        {
+            "category": "lip_color",
+            "shape": {"name": "original"},
+            "style": {"type": "full"},
+            "palettes": [{"color": "#8B2525", "texture": "matte", "colorIntensity": 75}],
+        },
+    ],
+}
+
+
+def run_makeup_tryon(
+    person_bytes: bytes,
+    preset: str = "natural",           # key from MAKEUP_PRESETS
+    custom_effects: Optional[list] = None,  # override with raw YouCam effects list
+) -> dict:
+    """Virtual makeup try-on. Use preset name or pass raw effects list."""
+    _check_key()
+    t0 = time.time()
+
+    effects = custom_effects or MAKEUP_PRESETS.get(preset, MAKEUP_PRESETS["natural"])
+    logger.info(f"💄 Makeup try-on (preset={preset}) — uploading…")
+
+    src_id = _upload(person_bytes, "face.jpg")
+
+    import requests as req
+    r = req.post(
+        f"{_BASE}/s2s/v2.0/task/makeup-vto",
+        headers=_headers(),
+        json={"src_file_id": src_id, "effects": effects, "version": "1.0"},
+        timeout=30,
+    )
+    if not r.ok:
+        raise RuntimeError(f"Makeup task error {r.status_code}: {r.text}")
+    task_id = r.json()["data"]["task_id"]
+    logger.info(f"💄 Task {task_id} — polling…")
+
+    result = _poll("/s2s/v2.0/task/makeup-vto", task_id)
+    return {
+        "result_image":     result,
+        "inference_time_s": round(time.time() - t0, 2),
+        "mode":             "youcam_makeup",
+        "device":           "cloud",
+        "feature":          "makeup",
+        "preset":           preset,
+    }
+
+
+# ─── Feature 4: Eye Color Try-On ─────────────────────────────────────────────
+
+EYE_COLOR_PRESETS = {
+    "blue":       "#2E86AB",
+    "green":      "#2D6A4F",
+    "gray":       "#6B7280",
+    "hazel":      "#8B6914",
+    "violet":     "#7B2D8B",
+    "amber":      "#C97D12",
+    "ice_blue":   "#A8D8EA",
+    "honey":      "#B5860D",
+}
+
+
+def run_eye_color_tryon(
+    person_bytes: bytes,
+    color_hex: str = "#2E86AB",   # hex color or key from EYE_COLOR_PRESETS
+) -> dict:
+    """Virtual colored contact lens try-on."""
+    _check_key()
+    t0 = time.time()
+
+    # Allow preset name as shorthand
+    color = EYE_COLOR_PRESETS.get(color_hex, color_hex)
+    logger.info(f"👁️ Eye color try-on ({color}) — uploading…")
+
+    src_id = _upload(person_bytes, "face.jpg")
+
+    import requests as req
+    r = req.post(
+        f"{_BASE}/s2s/v2.0/task/eye-color-lens",
+        headers=_headers(),
+        json={"src_file_id": src_id, "color": color},
+        timeout=30,
+    )
+    if not r.ok:
+        raise RuntimeError(f"Eye color task error {r.status_code}: {r.text}")
+    task_id = r.json()["data"]["task_id"]
+    logger.info(f"👁️ Task {task_id} — polling…")
+
+    result = _poll("/s2s/v2.0/task/eye-color-lens", task_id)
+    return {
+        "result_image":     result,
+        "inference_time_s": round(time.time() - t0, 2),
+        "mode":             "youcam_eye_color",
+        "device":           "cloud",
+        "feature":          "eye_color",
+        "color":            color,
+    }
+
+
+# ─── Feature 5: Hat Try-On ───────────────────────────────────────────────────
+
+def run_hat_tryon(person_bytes: bytes, hat_bytes: bytes) -> dict:
+    """Virtual hat / cap try-on."""
+    _check_key()
+    t0 = time.time()
+    logger.info("🎩 Hat try-on — uploading…")
+
+    src_id = _upload(person_bytes, "person.jpg")
+    ref_id = _upload(hat_bytes,    "hat.jpg")
+
+    import requests as req
+    r = req.post(
+        f"{_BASE}/s2s/v2.0/task/hat",
+        headers=_headers(),
+        json={"src_file_id": src_id, "ref_file_id": ref_id},
+        timeout=30,
+    )
+    if not r.ok:
+        raise RuntimeError(f"Hat task error {r.status_code}: {r.text}")
+    task_id = r.json()["data"]["task_id"]
+    logger.info(f"🎩 Task {task_id} — polling…")
+
+    result = _poll("/s2s/v2.0/task/hat", task_id)
+    return {
+        "result_image":     result,
+        "inference_time_s": round(time.time() - t0, 2),
+        "mode":             "youcam_hat",
+        "device":           "cloud",
+        "feature":          "hat",
+    }
+
+
+# ─── Feature 6: Shoes Try-On ─────────────────────────────────────────────────
+
+def run_shoes_tryon(person_bytes: bytes, shoes_bytes: bytes) -> dict:
+    """Virtual footwear try-on."""
+    _check_key()
+    t0 = time.time()
+    logger.info("👟 Shoes try-on — uploading…")
+
+    src_id = _upload(person_bytes,  "person.jpg")
+    ref_id = _upload(shoes_bytes,   "shoes.jpg")
+
+    import requests as req
+    r = req.post(
+        f"{_BASE}/s2s/v2.0/task/shoes",
+        headers=_headers(),
+        json={"src_file_id": src_id, "ref_file_id": ref_id},
+        timeout=30,
+    )
+    if not r.ok:
+        raise RuntimeError(f"Shoes task error {r.status_code}: {r.text}")
+    task_id = r.json()["data"]["task_id"]
+    logger.info(f"👟 Task {task_id} — polling…")
+
+    result = _poll("/s2s/v2.0/task/shoes", task_id)
+    return {
+        "result_image":     result,
+        "inference_time_s": round(time.time() - t0, 2),
+        "mode":             "youcam_shoes",
+        "device":           "cloud",
+        "feature":          "shoes",
+    }
+
+
+# ─── Legacy entry points (backward compat) ────────────────────────────────────
+
 def run_tryon(
     person_bytes: bytes,
     garment_bytes: bytes,
     person_mask_bytes: Optional[bytes] = None,
-    num_inference_steps: int = 30,
-    guidance_scale: float = 2.0,
-    seed: int = 42,
+    **kwargs,
 ) -> dict:
-    """
-    Virtual try-on: drape a garment onto a person photo.
-
-    Args:
-        person_bytes:         JPEG/PNG of person (any size, auto-resized to 1024×1024)
-        garment_bytes:        JPEG/PNG of garment on white background
-        person_mask_bytes:    Optional RGBA mask from SAM2 (used for inpainting region)
-        num_inference_steps:  Diffusion steps — 30 fast / 50 quality
-        guidance_scale:       CFG scale (2.0 recommended for VTON)
-        seed:                 Reproducibility seed
-
-    Returns:
-        {
-            "result_image":     bytes,   # JPEG bytes of try-on result
-            "inference_time_s": float,
-            "mode":             str,     # "local" | "fallback"
-            "device":           str,
-        }
-    """
-    _ensure_loaded()
-
-    person  = Image.open(io.BytesIO(person_bytes)).convert("RGB")
-    garment = Image.open(io.BytesIO(garment_bytes)).convert("RGB")
-
-    if _mode == "local":
-        return _infer_local(person, garment, person_mask_bytes, num_inference_steps, guidance_scale, seed)
-    else:
-        return _infer_fallback(person, garment, person_mask_bytes)
+    """Legacy route — delegates to clothes try-on."""
+    return run_clothes_tryon(person_bytes, garment_bytes)
 
 
-# ─── Path A: Full IDM-VTON inference ─────────────────────────────────────────
-def _infer_local(
-    person: Image.Image,
-    garment: Image.Image,
-    mask_bytes: Optional[bytes],
-    steps: int,
-    cfg: float,
-    seed: int,
-) -> dict:
-    import torch
-
-    # IDM-VTON target size
-    TARGET = (768, 1024)   # (width, height) matching their training resolution
-
-    person_r  = person.resize(TARGET, Image.LANCZOS)
-    garment_r = garment.resize(TARGET, Image.LANCZOS)
-
-    # Build inpaint mask — upper-body region if SAM2 mask not provided
-    if mask_bytes:
-        mask_img = Image.open(io.BytesIO(mask_bytes)).convert("L").resize(TARGET)
-        # IDM-VTON wants the garment region masked (white = repaint)
-        mask_np  = np.array(mask_img)
-    else:
-        # Default: mask the torso band (shoulder to hip, full width)
-        W, H    = TARGET
-        mask_np = np.zeros((H, W), dtype=np.uint8)
-        mask_np[int(H * 0.12): int(H * 0.75), :] = 255
-
-    mask_img = Image.fromarray(mask_np, mode="L")
-
-    prompt = (
-        "a photo of a person wearing a garment, "
-        "high quality, natural lighting, clean background"
-    )
-    neg_prompt = (
-        "monochrome, lowres, bad anatomy, worst quality, low quality, "
-        "mutated hands, bad hands, bad proportions"
-    )
-
-    generator = torch.Generator(_device).manual_seed(seed)
-
-    t0 = time.time()
-    with torch.inference_mode():
-        result = _pipe(
-            prompt=prompt,
-            negative_prompt=neg_prompt,
-            image=person_r,
-            mask_image=mask_img,
-            ip_adapter_image=garment_r,
-            num_inference_steps=steps,
-            guidance_scale=cfg,
-            generator=generator,
-            width=TARGET[0],
-            height=TARGET[1],
-        ).images[0]
-    elapsed = time.time() - t0
-
-    buf = io.BytesIO()
-    result.save(buf, format="JPEG", quality=92)
-
-    return {
-        "result_image":     buf.getvalue(),
-        "inference_time_s": round(elapsed, 2),
-        "mode":             "local",
-        "device":           _device,
-    }
-
-
-# ─── Path B: Composite overlay fallback ───────────────────────────────────────
-def _infer_fallback(
-    person: Image.Image,
-    garment: Image.Image,
-    mask_bytes: Optional[bytes],
-) -> dict:
-    """
-    Fast PIL-based garment overlay.
-    Not a real try-on, but useful for UI development before the model downloads.
-    """
-    t0 = time.time()
-
-    W, H = person.size
-
-    # Resize garment to cover torso (roughly 60% width, 55% height)
-    g_w = int(W * 0.60)
-    g_h = int(H * 0.55)
-    garment_r = garment.resize((g_w, g_h), Image.LANCZOS)
-
-    # Position: centred horizontally, starting at ~15% from top
-    x = (W - g_w) // 2
-    y = int(H * 0.15)
-
-    # Create alpha mask: soft oval to blend garment onto body
-    alpha = Image.new("L", (g_w, g_h), 0)
-    from PIL import ImageDraw
-    draw = ImageDraw.Draw(alpha)
-    margin = int(g_w * 0.10)
-    draw.ellipse([margin, margin, g_w - margin, g_h - margin], fill=220)
-    alpha = alpha.filter(ImageFilter.GaussianBlur(radius=g_w * 0.08))
-
-    garment_rgba = garment_r.convert("RGBA")
-    garment_rgba.putalpha(alpha)
-
-    result = person.convert("RGBA")
-    result.paste(garment_rgba, (x, y), garment_rgba)
-    result = result.convert("RGB")
-
-    # Subtle warm grade
-    result_np = np.array(result, dtype=np.float32)
-    result_np[:, :, 0] = np.clip(result_np[:, :, 0] * 1.03, 0, 255)
-    result = Image.fromarray(result_np.astype(np.uint8))
-
-    buf = io.BytesIO()
-    result.save(buf, format="JPEG", quality=90)
-
-    return {
-        "result_image":     buf.getvalue(),
-        "inference_time_s": round(time.time() - t0, 3),
-        "mode":             "fallback",
-        "device":           "cpu",
-        "note":             (
-            "Composite overlay — download IDM-VTON for real inference:\n"
-            "  cd services/ml-pipeline\n"
-            "  git clone https://huggingface.co/spaces/yisol/IDM-VTON vendor/IDM-VTON"
-        ),
-    }
-
-
-# ─── Model status ─────────────────────────────────────────────────────────────
 def model_status() -> dict:
-    """Report which inference path is active."""
     return {
-        "mode":          _mode or "not_loaded",
-        "vendor_exists": _VENDOR_DIR.exists(),
-        "weights_exist": _WEIGHTS_DIR.exists(),
-        "device":        _device or "unknown",
-        "setup_cmd": (
-            "cd services/ml-pipeline && "
-            "git clone https://huggingface.co/spaces/yisol/IDM-VTON vendor/IDM-VTON && "
-            "huggingface-cli download yisol/IDM-VTON --local-dir vendor/IDM-VTON-weights"
-        ) if _mode == "fallback" else None,
+        "mode":            "youcam" if _api_key() else "no_key",
+        "device":          "cloud",
+        "youcam_enabled":  bool(_api_key()),
+        "features":        ["clothes", "bag", "makeup", "eye_color", "hat", "shoes"],
+        "note":            "YouCam API (Perfect Corp) — photorealistic cloud inference, no local GPU needed",
+        "register":        "https://yce.makeupar.com/ai-api",
     }
