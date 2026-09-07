@@ -217,6 +217,10 @@ function ResultPanel({
 export default function TryOnPage() {
   const [feature, setFeature] = useState<Feature>("clothes");
 
+  // Auth
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [authUser, setAuthUser]   = useState<{ email: string; is_admin: boolean } | null>(null);
+
   // Shared images
   const [personFile, setPersonFile]     = useState<File | null>(null);
   const [personPreview, setPersonPreview] = useState<string | null>(null);
@@ -239,6 +243,24 @@ export default function TryOnPage() {
   const [resultB64, setResultB64] = useState<string | null>(null);
   const [resultMeta, setResultMeta] = useState<{ mode: string; inference_time_s: number } | null>(null);
   const [toast, setToast]       = useState<string | null>(null);
+
+  // Auth check on mount — redirect to /login if not logged in
+  useEffect(() => {
+    const token = localStorage.getItem("vf_token");
+    const user  = localStorage.getItem("vf_user");
+    if (!token) {
+      window.location.href = "/login";
+      return;
+    }
+    setAuthToken(token);
+    if (user) { try { setAuthUser(JSON.parse(user)); } catch {} }
+  }, []);
+
+  const logout = () => {
+    localStorage.removeItem("vf_token");
+    localStorage.removeItem("vf_user");
+    window.location.href = "/login";
+  };
 
   // Derived
   const resultSrc = resultB64 ? `data:image/jpeg;base64,${resultB64}` : null;
@@ -274,22 +296,21 @@ export default function TryOnPage() {
 
   const saveToWardrobe = async () => {
     if (!resultSrc) return;
+    const token = authToken || localStorage.getItem("vf_token");
+    if (!token) { window.location.href = "/login"; return; }
     try {
       const res = await fetch(
-        `${ML}/api/wardrobe/save?feature=${feature}&user_id=guest`,
-        { method: "POST", headers: { "Content-Type": "text/plain" }, body: resultSrc }
+        `${ML}/api/wardrobe/save?feature=${feature}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "text/plain", "Authorization": `Bearer ${token}` },
+          body: resultSrc,
+        }
       );
       const data = await res.json();
-      if (data.saved) {
-        setToast("Saved to wardrobe! ✅");
-        return;
-      }
+      if (data.saved) { setToast("Saved to wardrobe! ✅"); return; }
     } catch {}
-    // fallback: localStorage
-    const item = { id: Date.now().toString(), feature, name: `${feature} · ${new Date().toLocaleDateString()}`, saved_at: new Date().toISOString(), result_image: resultSrc };
-    const existing = (() => { try { return JSON.parse(localStorage.getItem("wardrobe") || "[]"); } catch { return []; } })();
-    localStorage.setItem("wardrobe", JSON.stringify([item, ...existing]));
-    setToast("Saved to wardrobe! ✅");
+    setToast("Save failed — try again");
   };
 
   // ── Submit ─────────────────────────────────────────────────────────────────
@@ -383,9 +404,22 @@ export default function TryOnPage() {
             YouCam AI
           </span>
         </div>
-        <a href="/wardrobe" className="text-sm text-slate-400 hover:text-white transition-colors">
-          My Wardrobe →
-        </a>
+        <div className="flex items-center gap-4">
+          {authUser && (
+            <span className="text-xs text-slate-500 hidden sm:block">
+              {authUser.is_admin ? "👑 " : ""}{authUser.email}
+            </span>
+          )}
+          <a href="/wardrobe" className="text-sm text-slate-400 hover:text-white transition-colors">
+            My Wardrobe →
+          </a>
+          <button
+            onClick={logout}
+            className="text-xs text-slate-500 hover:text-red-400 transition-colors"
+          >
+            Logout
+          </button>
+        </div>
       </nav>
 
       <div className="max-w-5xl mx-auto p-6 space-y-6">

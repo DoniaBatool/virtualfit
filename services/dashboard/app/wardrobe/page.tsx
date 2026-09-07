@@ -5,6 +5,10 @@ import { Shirt, Trash2, ArrowLeft, X, Download, ChevronLeft, ChevronRight } from
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:8001";
 
+function getToken(): string | null {
+  try { return localStorage.getItem("vf_token"); } catch { return null; }
+}
+
 interface WardrobeItem {
   id: string;
   name: string;
@@ -123,25 +127,26 @@ export default function WardrobePage() {
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
 
   useEffect(() => {
-    fetch(`${GATEWAY}/api/wardrobe`)
+    const token = getToken();
+    if (!token) { window.location.href = "/login"; return; }
+
+    fetch(`${GATEWAY}/api/wardrobe`, {
+      headers: { "Authorization": `Bearer ${token}` },
+    })
       .then((r) => r.json())
       .then((d) => {
-        const apiItems = Array.isArray(d) ? d : [];
-        const local = JSON.parse(localStorage.getItem("wardrobe") || "[]");
-        const ids = new Set(apiItems.map((i: WardrobeItem) => i.id));
-        setItems([...apiItems, ...local.filter((i: WardrobeItem) => !ids.has(i.id))]);
+        setItems(Array.isArray(d) ? d : []);
       })
-      .catch(() => {
-        const local = JSON.parse(localStorage.getItem("wardrobe") || "[]");
-        setItems(local);
-      })
+      .catch(() => setItems([]))
       .finally(() => setLoading(false));
   }, []);
 
   const remove = (id: string) => {
-    const local = JSON.parse(localStorage.getItem("wardrobe") || "[]");
-    localStorage.setItem("wardrobe", JSON.stringify(local.filter((i: WardrobeItem) => i.id !== id)));
-    fetch(`${GATEWAY}/api/wardrobe/${id}`, { method: "DELETE" }).catch(() => {});
+    const token = getToken();
+    fetch(`${GATEWAY}/api/wardrobe/${id}`, {
+      method: "DELETE",
+      headers: token ? { "Authorization": `Bearer ${token}` } : {},
+    }).catch(() => {});
     setItems((prev) => prev.filter((i) => i.id !== id));
   };
 

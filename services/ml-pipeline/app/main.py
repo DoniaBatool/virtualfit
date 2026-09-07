@@ -21,10 +21,10 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Body
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Body, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 
 from app.tryon import (
@@ -39,8 +39,12 @@ from app.tryon import (
     MAKEUP_PRESETS,
     EYE_COLOR_PRESETS,
 )
-from app.storage import save_result
-from app.database import save_wardrobe_item, get_wardrobe_items, delete_wardrobe_item
+from app.storage import save_result, save_wardrobe_image, get_wardrobe_image
+from app.database import (
+    save_wardrobe_item, get_wardrobe_items, delete_wardrobe_item,
+    create_user, get_user_by_email, get_user_by_id,
+)
+from app.auth import hash_password, verify_password, create_token, extract_token
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s  %(message)s")
 logger = logging.getLogger(__name__)
@@ -187,26 +191,170 @@ async def tryon_status():
     return model_status()
 
 
-# ─── 👗 Wardrobe (NeonDB) ─────────────────────────────────────────────────────
+# ─── Auth helpers ─────────────────────────────────────────────────────────────
+
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "donia1510aptech@gmail.com")
+
+
+def _current_user(authorization: Optional[str]) -> Optional[dict]:
+    """Extract user from JWT Bearer header. Returns None if missing/invalid."""
+    payload = extract_token(authorization)
+    if not payload:
+        return None
+    return {"id": int(payload["sub"]), "email": payload["email"], "is_admin": payload.get("is_admin", False)}
+
+
+def _require_user(authorization: Optional[str]) -> dict:
+    user = _current_user(authorization)
+    if not user:
+        raise HTTPException(401, "Not authenticated — please login")
+    return user
+
+
+def _get_youcam_keys(user: dict) -> tuple[str, str]:
+    """Return (api_key, secret_key) — admin uses env, others use their own stored keys."""
+    if user["is_admin"]:
+        return os.environ.get("YOUCAM_API_KEY", ""), os.environ.get("YOUCAM_SECRET_KEY", "")
+    # For regular users, fetch their stored keys from DB
+    db_user = get_user_by_id(user["id"])
+    if db_user:
+        return db_user.get("youcam_api_key", ""), db_user.get("youcam_secret_key", "")
+    return "", ""
+
+
+# ─── Auth Endpoints ───────────────────────────────────────────────────────────
+
+class SignupRequest(BaseModel):
+    email: str
+    password: str
+    youcam_api_key: str = ""
+    youcam_secret_key: str = ""
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/api/auth/signup")
+async def signup(req: SignupRequest):
+    """Register a new user. Admin email uses env YouCam keys; others must supply their own."""
+    email = req.email.lower().strip()
+    if not email or not req.password:
+        raise HTTPException(400, "Email and password required")
+    if len(req.password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+
+    is_admin = (email == ADMIN_EMAIL.lower())
+
+    # Non-admin users must provide YouCam keys
+    if not is_admin and (not req.youcam_api_key or not req.youcam_secret_key):
+        raise HTTPException(400, "YouCam API key and secret required for non-admin users")
+
+    # Check duplicate
+    if get_user_by_email(email):
+        raise HTTPException(409, "Account with this email already exists")
+
+    pwd_hash = hash_password(req.password)
+    user = create_user(
+        email=email,
+        password_hash=pwd_hash,
+        youcam_api_key=req.youcam_api_key if not is_admin else "",
+        youcam_secret_key=req.youcam_secret_key if not is_admin else "",
+        is_admin=is_admin,
+    )
+    if not user:
+        raise HTTPException(500, "Failed to create account — database error")
+
+    token = create_token(user["id"], user["email"], user["is_admin"])
+    return {"token": token, "user": {"id": user["id"], "email": user["email"], "is_admin": user["is_admin"]}}
+
+
+@app.post("/api/auth/login")
+async def login(req: LoginRequest):
+    """Login and return JWT token."""
+    email = req.email.lower().strip()
+    user = get_user_by_email(email)
+    if not user or not verify_password(req.password, user["password_hash"]):
+        raise HTTPException(401, "Invalid email or password")
+
+    token = create_token(user["id"], user["email"], user["is_admin"])
+    return {"token": token, "user": {"id": user["id"], "email": user["email"], "is_admin": user["is_admin"]}}
+
+
+@app.get("/api/auth/me")
+async def me(authorization: Optional[str] = Header(default=None)):
+    """Get current user info from JWT."""
+    user = _require_user(authorization)
+    return {"id": user["id"], "email": user["email"], "is_admin": user["is_admin"]}
+
+
+# ─── Image Proxy (serve R2 images) ───────────────────────────────────────────
+
+@app.get("/api/image/{key:path}")
+async def get_image(key: str):
+    """Proxy wardrobe images from R2 → browser (so no public R2 URL needed)."""
+    data = get_wardrobe_image(key)
+    if data is None:
+        raise HTTPException(404, "Image not found")
+    return Response(content=data, media_type="image/jpeg")
+
+
+# ─── 👗 Wardrobe (NeonDB + R2) ────────────────────────────────────────────────
 @app.get("/api/wardrobe")
-async def get_wardrobe(user_id: str = Query(default="guest")):
-    """Fetch saved wardrobe items from NeonDB."""
-    return get_wardrobe_items(user_id)
+async def get_wardrobe(authorization: Optional[str] = Header(default=None)):
+    """Fetch saved wardrobe items for the authenticated user."""
+    user = _require_user(authorization)
+    return get_wardrobe_items(str(user["id"]))
+
 
 @app.delete("/api/wardrobe/{item_id}")
-async def delete_wardrobe(item_id: str, user_id: str = Query(default="guest")):
-    """Delete a wardrobe item from NeonDB."""
-    ok = delete_wardrobe_item(item_id, user_id)
+async def delete_wardrobe(item_id: str, authorization: Optional[str] = Header(default=None)):
+    """Delete a wardrobe item (authenticated user only)."""
+    user = _require_user(authorization)
+    ok = delete_wardrobe_item(item_id, str(user["id"]))
     return {"deleted": ok}
+
 
 @app.post("/api/wardrobe/save")
 async def save_to_wardrobe(
     feature: str = Query(...),
     result_image: str = Body(..., media_type="text/plain"),
-    user_id: str = Query(default="guest"),
+    authorization: Optional[str] = Header(default=None),
 ):
-    """Save a try-on result to wardrobe (called from frontend)."""
-    saved = save_wardrobe_item(feature=feature, result_url=result_image, user_id=user_id)
+    """
+    Save a try-on result to wardrobe.
+    Uploads image to R2 (not base64 in DB), stores URL in NeonDB.
+    """
+    user = _require_user(authorization)
+    user_id = str(user["id"])
+
+    import base64 as _b64
+    # result_image is "data:image/jpeg;base64,..." or raw base64
+    try:
+        if result_image.startswith("data:"):
+            b64_data = result_image.split(",", 1)[1]
+        else:
+            b64_data = result_image
+        image_bytes = _b64.b64decode(b64_data)
+    except Exception:
+        raise HTTPException(400, "Invalid image data")
+
+    # Upload to R2, get key
+    r2_key = save_wardrobe_image(image_bytes)
+    if r2_key:
+        # Store proxy URL: /api/image/<key>
+        railway_base = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
+        if railway_base:
+            result_url = f"https://{railway_base}/api/image/{r2_key}"
+        else:
+            result_url = f"/api/image/{r2_key}"
+    else:
+        # Fallback: store base64 directly (graceful degradation)
+        result_url = result_image[:500] + "...[truncated]" if len(result_image) > 500 else result_image
+        logger.warning("R2 upload failed — storing truncated base64 as fallback")
+
+    saved = save_wardrobe_item(feature=feature, result_url=result_url, user_id=user_id)
     if saved:
         return {"saved": True, "id": saved["id"]}
     return {"saved": False}

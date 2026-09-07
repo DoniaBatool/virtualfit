@@ -45,11 +45,12 @@ All AI inference runs on **Perfect Corp's cloud** (YouCam API) — photorealisti
 
 | Service | Tech | Deployed On | Status |
 |---|---|---|---|
-| Dashboard | Next.js 15 | Vercel | ✅ Phase 1 |
-| ML Pipeline | Python FastAPI | Railway | ✅ Phase 1 |
-| AI Inference | YouCam API | Perfect Corp cloud | ✅ Phase 1 |
-| Database | PostgreSQL | NeonDB (serverless) | 🔜 Phase 2 |
-| Image Storage | S3-compatible | Cloudflare R2 | 🔜 Phase 2 |
+| Dashboard | Next.js 15 | Vercel | ✅ Live |
+| ML Pipeline | Python FastAPI | Railway | ✅ Live |
+| AI Inference | YouCam API | Perfect Corp cloud | ✅ Live |
+| Auth (JWT) | bcrypt + PyJWT | Railway | ✅ Phase 2 |
+| Database | PostgreSQL | NeonDB (serverless) | ✅ Phase 2 |
+| Image Storage | S3-compatible | Cloudflare R2 | ✅ Phase 2 |
 
 ---
 
@@ -77,17 +78,21 @@ virtual_tryon/
 │   ├── dashboard/              # Next.js 15 frontend (deployed to Vercel)
 │   │   ├── app/
 │   │   │   ├── page.tsx            # Redirects to landing page
-│   │   │   ├── tryon/page.tsx      # Main try-on UI (6 feature tabs)
-│   │   │   └── wardrobe/page.tsx   # Saved results with lightbox
+│   │   │   ├── login/page.tsx      # Login page (JWT)
+│   │   │   ├── signup/page.tsx     # Signup page (with YouCam key input)
+│   │   │   ├── tryon/page.tsx      # Main try-on UI (6 feature tabs, auth-protected)
+│   │   │   └── wardrobe/page.tsx   # Saved results with lightbox (auth-protected)
 │   │   ├── public/
 │   │   │   └── landing.html        # Cinematic scroll landing page
 │   │   └── vercel.json             # Vercel deployment config
 │   └── ml-pipeline/            # Python FastAPI ML service (deployed to Railway)
 │       ├── app/
-│       │   ├── main.py             # FastAPI app + all 6 try-on endpoints
+│       │   ├── main.py             # FastAPI app + all endpoints + auth
+│       │   ├── auth.py             # JWT create/decode + bcrypt password hashing
 │       │   ├── tryon.py            # YouCam API integration (all features)
-│       │   └── storage.py          # MinIO integration
-│       ├── pyproject.toml          # Lightweight deps (no torch/diffusers)
+│       │   ├── database.py         # NeonDB CRUD (users + wardrobe)
+│       │   └── storage.py          # Cloudflare R2 upload + image proxy
+│       ├── requirements.txt        # Deps including bcrypt + PyJWT
 │       ├── railway.json            # Railway deployment config
 │       └── Procfile                # Railway start command
 ├── docker-compose.yml          # MinIO + PostgreSQL only

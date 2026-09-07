@@ -102,3 +102,68 @@ def delete_wardrobe_item(item_id: str, user_id: str = "guest") -> bool:
     except Exception as e:
         logger.warning(f"DB delete failed: {e}")
         return False
+
+
+# ─── User CRUD ───────────────────────────────────────────────────────────────
+
+def create_user(email: str, password_hash: str, youcam_api_key: str = "", youcam_secret_key: str = "", is_admin: bool = False) -> Optional[dict]:
+    conn = _get_conn()
+    if conn is None:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO users (email, password_hash, youcam_api_key, youcam_secret_key, is_admin)
+                   VALUES (%s, %s, %s, %s, %s)
+                   RETURNING id, email, is_admin, created_at""",
+                (email.lower(), password_hash, youcam_api_key, youcam_secret_key, is_admin),
+            )
+            row = cur.fetchone()
+            return {"id": row[0], "email": row[1], "is_admin": row[2], "created_at": str(row[3])}
+    except Exception as e:
+        logger.warning(f"DB create_user failed: {e}")
+        return None
+
+
+def get_user_by_email(email: str) -> Optional[dict]:
+    conn = _get_conn()
+    if conn is None:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, email, password_hash, youcam_api_key, youcam_secret_key, is_admin FROM users WHERE email = %s",
+                (email.lower(),),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            return {
+                "id": row[0], "email": row[1], "password_hash": row[2],
+                "youcam_api_key": row[3], "youcam_secret_key": row[4], "is_admin": row[5],
+            }
+    except Exception as e:
+        logger.warning(f"DB get_user_by_email failed: {e}")
+        return None
+
+
+def get_user_by_id(user_id: int) -> Optional[dict]:
+    conn = _get_conn()
+    if conn is None:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, email, youcam_api_key, youcam_secret_key, is_admin FROM users WHERE id = %s",
+                (user_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            return {
+                "id": row[0], "email": row[1],
+                "youcam_api_key": row[2], "youcam_secret_key": row[3], "is_admin": row[4],
+            }
+    except Exception as e:
+        logger.warning(f"DB get_user_by_id failed: {e}")
+        return None

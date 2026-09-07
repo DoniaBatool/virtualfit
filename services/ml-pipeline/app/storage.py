@@ -105,3 +105,46 @@ def save_garment(image_bytes: bytes, garment_id: str) -> Optional[str]:
         bucket="garment-catalog",
         prefix=f"garments/{garment_id}/",
     )
+
+
+def save_wardrobe_image(image_bytes: bytes) -> Optional[str]:
+    """
+    Upload a wardrobe result image to R2 bucket (virtualfit-images).
+    Returns the R2 object key (e.g. 'wardrobe/abc123.jpg') or None.
+    The key is stored in NeonDB; images are served via /api/image/<key> proxy.
+    """
+    client = _get_client()
+    if client is None:
+        return None
+
+    bucket = os.getenv("MINIO_BUCKET", "virtualfit-images")
+    key    = f"wardrobe/{uuid.uuid4().hex}.jpg"
+
+    try:
+        client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=io.BytesIO(image_bytes),
+            ContentType="image/jpeg",
+            ContentLength=len(image_bytes),
+        )
+        logger.info(f"✅ Wardrobe image saved to R2: {key}")
+        return key   # caller stores this key in NeonDB
+    except Exception as e:
+        logger.warning(f"R2 wardrobe upload failed: {e}")
+        return None
+
+
+def get_wardrobe_image(key: str) -> Optional[bytes]:
+    """Fetch wardrobe image bytes from R2 by key (for /api/image proxy)."""
+    client = _get_client()
+    if client is None:
+        return None
+
+    bucket = os.getenv("MINIO_BUCKET", "virtualfit-images")
+    try:
+        resp = client.get_object(Bucket=bucket, Key=key)
+        return resp["Body"].read()
+    except Exception as e:
+        logger.warning(f"R2 get_object failed ({key}): {e}")
+        return None

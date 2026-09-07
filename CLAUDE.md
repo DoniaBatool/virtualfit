@@ -1,7 +1,7 @@
 # Virtual Try-On System — CLAUDE.md
 
-**Last Updated:** 2026-09-05  
-**Status:** Week 3 — YouCam API (cloud inference, no local GPU needed)
+**Last Updated:** 2026-09-07  
+**Status:** Phase 2 — Auth system + per-user YouCam keys + R2 image storage
 
 > 📋 **Is project ka full roadmap:** [`PLAN.md`](./PLAN.md) — har session mein yahan se start karo. PLAN.md mein week-by-week checklist, architecture, data flow, aur all commands hain.
 
@@ -76,62 +76,69 @@ MinIO (local Docker)             ← result image storage (S3-compatible)
 
 ### Stack
 
-| Service | Tech | Phase |
-|---|---|---|
-| Frontend | Next.js 15 → Vercel | ✅ Phase 1 |
-| ML Pipeline | Python FastAPI → Railway | ✅ Phase 1 |
-| AI Inference | YouCam API (Perfect Corp cloud) | ✅ Phase 1 |
-| Database | PostgreSQL → NeonDB (serverless free) | 🔜 Phase 2 |
-| Image Storage | S3-compatible → Cloudflare R2 (free 10GB) | 🔜 Phase 2 |
+| Service | Tech | Phase | Status |
+|---|---|---|---|
+| Frontend | Next.js 15 → Vercel | Phase 1 | ✅ Live |
+| ML Pipeline | Python FastAPI → Railway | Phase 1 | ✅ Live |
+| AI Inference | YouCam API (Perfect Corp cloud) | Phase 1 | ✅ Live |
+| Database | PostgreSQL → NeonDB (serverless free) | Phase 2 | ✅ Live |
+| Image Storage | S3-compatible → Cloudflare R2 (free 10GB) | Phase 2 | ✅ Live |
+| Auth | JWT + bcrypt signup/login | Phase 2 | ✅ Live |
+| Per-user API keys | Each user stores own YouCam keys | Phase 2 | ✅ Live |
 
 > ⚠️ **No local ML models, no Go, no Rust, no Redis, no Qdrant, no Redpanda, no Docker needed.**
-> YouCam cloud handles all AI. Phase 1 is fully deployable with just Railway + Vercel.
+> YouCam cloud handles all AI.
+
+### Phase 2 Features (✅ Complete)
+- **Auth**: JWT-based signup/login (`POST /api/auth/signup`, `POST /api/auth/login`)
+- **Admin**: Donia (`donia1510aptech@gmail.com`) uses env-based YouCam keys automatically
+- **Users**: New signups must provide their own YouCam API key + secret at registration
+- **Wardrobe isolation**: Each user sees only their own saved items (filtered by JWT user_id)
+- **R2 image storage**: Wardrobe images upload to Cloudflare R2; NeonDB stores URL only (not base64)
+- **Image proxy**: `GET /api/image/<key>` endpoint serves R2 images (no public R2 URL needed)
+- **NeonDB tables**: `users` (email, password_hash, youcam_api_key, youcam_secret_key, is_admin) + `wardrobe`
 
 ---
 
 ## Service Ports
 
-| Service            | Port  | Language   | Kaam                          |
-|--------------------|-------|------------|-------------------------------|
-| dashboard          | :3002 | TypeScript | Frontend UI                   |
-| gateway            | :3004 | Go         | Auth + routing + rate limit   |
-| image-processor    | :8090 | Rust       | Upload handler + preprocessing|
-| ml-pipeline        | :8001 | Python     | DensePose + GAN + TF + Qiskit |
-| PostgreSQL         | :5433 | -          | Users, wardrobe, garments DB  |
-| Redis              | :6379 | -          | Cache                         |
-| Qdrant             | :6333 | -          | Vector search                 |
-| MinIO              | :9000 | -          | Image file storage            |
-| DAPR sidecar       | :3500 | -          | Service mesh                  |
-| Prometheus         | :9090 | -          | Metrics                       |
-| Grafana            | :3001 | -          | Dashboards                    |
+| Service | Port | Deployed On | Notes |
+|---|---|---|---|
+| dashboard | :3002 | Vercel (prod) | Next.js 15 |
+| ml-pipeline | :8001 | Railway (prod) | FastAPI + YouCam |
+| NeonDB | cloud | neon.tech | PostgreSQL, free tier |
+| Cloudflare R2 | cloud | cloudflare.com | S3-compatible, 10GB free |
 
 ---
 
-## Data Flow (Request Lifecycle)
+## API Endpoints
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | /api/auth/signup | none | Register (admin auto-detected by email) |
+| POST | /api/auth/login | none | Login → JWT token |
+| GET | /api/auth/me | JWT | Get current user |
+| POST | /api/tryon | none | Clothes try-on |
+| POST | /api/bag | none | Bag try-on |
+| POST | /api/makeup | none | Makeup try-on |
+| POST | /api/eye-color | none | Eye color try-on |
+| POST | /api/hat | none | Hat try-on |
+| POST | /api/shoes | none | Shoes try-on |
+| GET | /api/wardrobe | JWT | Get user's wardrobe |
+| POST | /api/wardrobe/save | JWT | Save result → R2 + NeonDB |
+| DELETE | /api/wardrobe/{id} | JWT | Delete wardrobe item |
+| GET | /api/image/{key} | none | Proxy R2 image to browser |
+
+---
+
+## Data Flow (Current)
 
 ```
-1. User uploads photo + selects garment
-   → POST /api/tryon (dashboard → gateway :3004)
-
-2. Gateway validates JWT token + rate limit check
-   → Forwards to image-processor :8090
-
-3. Rust image-processor:
-   - Resizes photo to 512x512
-   - Compresses garment image
-   - Stores both in MinIO
-   - Publishes event via DAPR: "images.ready"
-
-4. Python ml-pipeline receives DAPR event:
-   - DensePose: body UV mapping → measurements
-   - GAN cloth_warper: warp garment to body shape
-   - TF size_predictor: predict S/M/L + fit score
-   - image_composer: blend warped cloth onto person
-   - Saves result to MinIO
-   - Publishes: "tryon.complete"
-
-5. Gateway receives result → returns to dashboard
-6. Dashboard shows split-screen: original | try-on result
+1. User visits /tryon → redirected to /login if not logged in
+2. Login/Signup → JWT stored in localStorage
+3. User uploads photos → FastAPI (Railway) → YouCam API (cloud) → result base64
+4. User clicks Save → Railway uploads to R2, stores URL in NeonDB
+5. Wardrobe page fetches items with JWT → NeonDB rows → images served via /api/image proxy
 ```
 
 ---
