@@ -374,18 +374,37 @@ def run_eye_color_tryon(
     src_id = _upload(person_bytes, "face.jpg")
 
     import requests as req
+
+    # Try primary endpoint, fall back to alternative name
+    endpoint = "/s2s/v2.0/task/eye-color-lens"
     r = req.post(
-        f"{_BASE}/s2s/v2.0/task/eye-color-lens",
+        f"{_BASE}{endpoint}",
         headers=_headers(),
         json={"src_file_id": src_id, "color": color},
         timeout=30,
     )
+    # If endpoint not found, try alternative name
+    if r.status_code == 404:
+        endpoint = "/s2s/v2.0/task/eye-color"
+        r = req.post(
+            f"{_BASE}{endpoint}",
+            headers=_headers(),
+            json={"src_file_id": src_id, "color": color},
+            timeout=30,
+        )
     if not r.ok:
+        err = r.json() if r.headers.get("content-type","").startswith("application/json") else r.text
+        if r.status_code == 404:
+            raise RuntimeError(
+                "Eye color try-on is not available on your current YouCam API plan. "
+                "This feature may require a paid tier. "
+                f"API response: {err}"
+            )
         raise RuntimeError(f"Eye color task error {r.status_code}: {r.text}")
     task_id = r.json()["data"]["task_id"]
     logger.info(f"👁️ Task {task_id} — polling…")
 
-    result = _poll("/s2s/v2.0/task/eye-color-lens", task_id)
+    result = _poll(endpoint, task_id)
     return {
         "result_image":     result,
         "inference_time_s": round(time.time() - t0, 2),
