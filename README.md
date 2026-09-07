@@ -36,10 +36,10 @@ All AI inference runs on **Perfect Corp's cloud** (YouCam API) — photorealisti
 │         Perfect Corp YouCam AI (cloud)               │
 │  Clothes · Bag · Makeup · Eye Color · Hat · Shoes   │
 └─────────────────────────────────────────────────────┘
-         ↓ result images
+         ↓ wardrobe images
 ┌─────────────────────────────────────────────────────┐
-│              MinIO (local Docker, optional)          │
-│              S3-compatible image storage             │
+│              Cloudflare R2 (image storage)           │
+│   NeonDB PostgreSQL (users + wardrobe metadata)     │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -95,38 +95,29 @@ virtual_tryon/
 │       ├── requirements.txt        # Deps including bcrypt + PyJWT
 │       ├── railway.json            # Railway deployment config
 │       └── Procfile                # Railway start command
-├── docker-compose.yml          # MinIO + PostgreSQL only
 ├── .env                        # API keys (gitignored)
+├── PLAN.md                     # Project plan + phase completion
 └── CLAUDE.md                   # Dev notes + architecture
 ```
 
 ---
 
-## Quick Start
+## Quick Start (Local Dev)
 
 ### Prerequisites
-
-- Docker Desktop (for MinIO, optional)
 - Node.js 20+ and pnpm
-- Python 3.12+ and uv
+- Python 3.12+
 - YouCam API key from [yce.makeupar.com/ai-api](https://yce.makeupar.com/ai-api)
 
-### 1. Set up environment
-
-```bash
-# Add your YouCam API key to .env
-echo "YOUCAM_API_KEY=your_key_here" >> .env
-```
-
-### 2. ML Pipeline
+### 1. Backend
 
 ```bash
 cd services/ml-pipeline
-uv sync
-uv run uvicorn app.main:app --port 8001 --reload
+pip install -r requirements.txt
+uvicorn app.main:app --port 8001 --reload
 ```
 
-### 3. Next.js Dashboard
+### 2. Frontend
 
 ```bash
 cd services/dashboard
@@ -134,111 +125,59 @@ pnpm install
 pnpm dev
 ```
 
-Open [http://localhost:3002](http://localhost:3002) — landing page loads first.
-
-### 4. (Optional) Start MinIO for image storage
-
-```bash
-docker compose up -d
-```
+Open [http://localhost:3002](http://localhost:3002)
 
 ---
 
 ## API Endpoints
 
-### ML Pipeline (port 8001)
-
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/health` | Service status |
-| GET | `/api/tryon/status` | YouCam API connection status |
-| POST | `/api/tryon` | Clothes virtual try-on |
-| POST | `/api/bag` | Bag try-on |
-| POST | `/api/makeup` | Makeup try-on |
-| POST | `/api/eye-color` | Eye color try-on |
-| POST | `/api/hat` | Hat try-on |
-| POST | `/api/shoes` | Shoes try-on |
-
-### Example: Clothes Try-On
-
-```bash
-curl -X POST http://localhost:8001/api/tryon \
-  -F "person_image=@/path/to/person.jpg" \
-  -F "garment_image=@/path/to/shirt.jpg" \
-  -F "category=upper_body"
-```
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| POST | `/api/auth/signup` | — | Register account |
+| POST | `/api/auth/login` | — | Login → JWT token |
+| GET | `/api/auth/me` | JWT | Current user |
+| POST | `/api/tryon` | — | Clothes try-on |
+| POST | `/api/bag` | — | Bag try-on |
+| POST | `/api/makeup` | — | Makeup try-on |
+| POST | `/api/eye-color` | — | Eye color try-on |
+| POST | `/api/hat` | — | Hat try-on |
+| POST | `/api/shoes` | — | Shoes try-on |
+| GET | `/api/wardrobe` | JWT | User's wardrobe |
+| POST | `/api/wardrobe/save` | JWT | Save to wardrobe (→ R2) |
+| DELETE | `/api/wardrobe/{id}` | JWT | Delete item |
+| GET | `/api/image/{key}` | — | Proxy R2 image |
 
 ---
 
-## Deployment
+## Deployment (Live)
 
-### Phase 1 — Core (Vercel + Railway)
-
-**Railway (ML Pipeline):**
-1. [railway.app](https://railway.app) → New Project → Deploy from GitHub
-2. Root Directory: `services/ml-pipeline`
-3. Env vars: `YOUCAM_API_KEY`, `YOUCAM_SECRET_KEY`
-4. Deploy — auto-detected from `railway.json`
-
-**Vercel (Dashboard):**
-1. [vercel.com](https://vercel.com) → New Project → import repo
-2. Root Directory: `services/dashboard`
-3. Env var: `NEXT_PUBLIC_GATEWAY_URL=https://your-railway-url`
-4. Deploy
-
-### Phase 2 — Database + Storage (NeonDB + Cloudflare R2)
-
-**NeonDB (PostgreSQL — user accounts, wardrobe):**
-1. [neon.tech](https://neon.tech) → free account → create database `virtualfit`
-2. Copy connection string → add to `.env` and Railway/Vercel env vars:
-   ```
-   DATABASE_URL=postgresql://user:pass@ep-xxx.neon.tech/virtualfit
-   ```
-
-**Cloudflare R2 (image storage — replaces local MinIO):**
-1. [dash.cloudflare.com](https://dash.cloudflare.com) → R2 → Create bucket `virtualfit-images`
-2. Create API token → add to `.env` and Railway env vars:
-   ```
-   MINIO_ENDPOINT=https://xxx.r2.cloudflarestorage.com
-   MINIO_ACCESS_KEY=your_r2_access_key
-   MINIO_SECRET_KEY=your_r2_secret_key
-   MINIO_BUCKET=virtualfit-images
-   ```
-   > Code stays identical — R2 is S3-compatible, boto3 works unchanged.
+| Service | URL |
+|---|---|
+| Frontend | https://virtualfit-tau.vercel.app |
+| Backend | https://virtualfit-production.up.railway.app |
 
 ---
 
 ## Environment Variables
 
+### Railway (backend)
 ```env
-# ── Phase 1 (required now) ──────────────────────────────
-YOUCAM_API_KEY=your_api_key_here
-YOUCAM_SECRET_KEY=your_secret_key_here
-NEXT_PUBLIC_GATEWAY_URL=http://localhost:8001   # → Railway URL in production
-
-# ── Phase 2 (NeonDB + Cloudflare R2 — add later) ───────
-DATABASE_URL=postgresql://user:pass@ep-xxx.neon.tech/virtualfit
-JWT_SECRET=your_jwt_secret
-
-MINIO_ENDPOINT=https://xxx.r2.cloudflarestorage.com   # Cloudflare R2 in prod
-MINIO_ACCESS_KEY=your_r2_access_key                   # or minioadmin locally
-MINIO_SECRET_KEY=your_r2_secret_key
+YOUCAM_API_KEY=sk-...
+YOUCAM_SECRET_KEY=MIGf...
+JWT_SECRET=<long random string>
+ADMIN_EMAIL=donia1510aptech@gmail.com
+DATABASE_URL=postgresql://...@neon.tech/neondb?sslmode=require&channel_binding=require
+MINIO_ENDPOINT=https://<account>.r2.cloudflarestorage.com
+MINIO_ACCESS_KEY=<r2_access_key>
+MINIO_SECRET_KEY=<r2_secret_key>
 MINIO_BUCKET=virtualfit-images
+MINIO_USE_SSL=true
 ```
 
----
-
-## Error Reference
-
-### dotenv timing issue — API key "not set" even after adding to .env
-**Cause:** `_API_KEY = os.environ.get(...)` at module level runs before `load_dotenv()`.  
-**Fix:** Use lazy function `_api_key()` that reads `os.environ.get()` at call time. Also load dotenv inside `tryon.py` itself.
-
-### PostgreSQL port conflict (5432 already in use)
-**Fix:** Use port `5433:5432` in docker-compose.yml (macOS Homebrew already uses 5432).
-
-### uv sync — correct way to install/remove packages
-Always use `uv sync` after updating `pyproject.toml` — never `pip install` directly.
+### Vercel (frontend)
+```env
+NEXT_PUBLIC_GATEWAY_URL=https://virtualfit-production.up.railway.app
+```
 
 ---
 
