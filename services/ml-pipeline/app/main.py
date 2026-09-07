@@ -28,7 +28,6 @@ from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 
 from app.tryon import (
-    run_tryon,
     run_clothes_tryon,
     run_bag_tryon,
     run_makeup_tryon,
@@ -38,6 +37,7 @@ from app.tryon import (
     model_status,
     MAKEUP_PRESETS,
     EYE_COLOR_PRESETS,
+    set_keys as _set_youcam_keys,
 )
 from app.storage import save_result, save_wardrobe_image, get_wardrobe_image
 from app.database import (
@@ -135,34 +135,25 @@ async def health():
 async def try_on(
     person_image:  UploadFile = File(..., description="Full-body person photo"),
     garment_image: UploadFile = File(..., description="Clothing item photo"),
-    category:      str        = Query(
-        default="upper_body",
-        description="Garment category: upper_body | lower_body | full_body",
-    ),
-    save_to_minio: bool = Query(default=True),
+    category:      str        = Query(default="upper_body"),
+    save_to_minio: bool       = Query(default=True),
+    authorization: Optional[str] = Header(default=None),
 ):
-    """
-    Virtual clothing try-on powered by YouCam AI.
-
-    Upload a person photo and a clothing item photo.
-    YouCam places the garment realistically onto the person.
-
-    Returns:
-        - result_image_b64: try-on result as base64 JPEG
-        - result_url: MinIO storage URL (if MinIO is running)
-        - inference_time_s: total round-trip time
-        - mode: always "youcam_clothes"
-    """
+    """Virtual clothing try-on powered by YouCam AI."""
     _validate_image(person_image,  "person_image")
     _validate_image(garment_image, "garment_image")
 
     person_bytes  = await person_image.read()
     garment_bytes = await garment_image.read()
 
+    user = _current_user(authorization)
+    api_key, secret_key = _get_youcam_keys(user) if user else ("", "")
+
     try:
         loop   = asyncio.get_event_loop()
         result = await loop.run_in_executor(
-            None, run_clothes_tryon, person_bytes, garment_bytes, category
+            None, _run_with_keys, run_clothes_tryon, api_key, secret_key,
+            person_bytes, garment_bytes, category
         )
     except Exception as e:
         _err(e)
@@ -215,11 +206,19 @@ def _get_youcam_keys(user: dict) -> tuple[str, str]:
     """Return (api_key, secret_key) — admin uses env, others use their own stored keys."""
     if user["is_admin"]:
         return os.environ.get("YOUCAM_API_KEY", ""), os.environ.get("YOUCAM_SECRET_KEY", "")
-    # For regular users, fetch their stored keys from DB
     db_user = get_user_by_id(user["id"])
     if db_user:
         return db_user.get("youcam_api_key", ""), db_user.get("youcam_secret_key", "")
     return "", ""
+
+
+def _run_with_keys(fn, api_key: str, secret_key: str, *args):
+    """Wrapper: set thread-local YouCam keys before calling tryon function."""
+    _set_youcam_keys(api_key, secret_key)
+    try:
+        return fn(*args)
+    finally:
+        _set_youcam_keys("", "")
 
 
 # ─── Auth Endpoints ───────────────────────────────────────────────────────────
@@ -366,41 +365,30 @@ BAG_STYLES = ["random", "style_parisian_chic", "style_urban_chic",
 
 @app.post("/api/bag")
 async def bag_tryon(
-    person_image: UploadFile = File(..., description="Full-body person photo"),
-    bag_image:    UploadFile = File(..., description="Handbag / purse photo"),
-    gender: str = Query(default="female", description="male | female"),
-    style:  str = Query(
-        default="random",
-        description="Style preset: random | style_parisian_chic | style_urban_chic | "
-                    "style_mediterranean_chic | style_art_deco_style",
-    ),
+    person_image: UploadFile = File(...),
+    bag_image:    UploadFile = File(...),
+    gender: str  = Query(default="female"),
+    style:  str  = Query(default="random"),
     save_to_minio: bool = Query(default=True),
+    authorization: Optional[str] = Header(default=None),
 ):
-    """
-    Virtual handbag / purse try-on.
-
-    YouCam places the bag realistically on or beside the person.
-
-    Style presets choose the pose / scene aesthetic:
-    - random: let YouCam choose
-    - style_parisian_chic: elegant Parisian look
-    - style_urban_chic: modern city style
-    - style_mediterranean_chic: warm Mediterranean vibes
-    - style_art_deco_style: bold geometric aesthetic
-    """
+    """Virtual handbag / purse try-on."""
     _validate_image(person_image, "person_image")
     _validate_image(bag_image,    "bag_image")
-
     if style not in BAG_STYLES:
         raise HTTPException(422, f"style must be one of: {BAG_STYLES}")
 
     person_bytes = await person_image.read()
     bag_bytes    = await bag_image.read()
 
+    user = _current_user(authorization)
+    api_key, secret_key = _get_youcam_keys(user) if user else ("", "")
+
     try:
         loop   = asyncio.get_event_loop()
         result = await loop.run_in_executor(
-            None, run_bag_tryon, person_bytes, bag_bytes, gender, style
+            None, _run_with_keys, run_bag_tryon, api_key, secret_key,
+            person_bytes, bag_bytes, gender, style
         )
     except Exception as e:
         _err(e)
@@ -429,35 +417,25 @@ class MakeupRequest(BaseModel):
 
 @app.post("/api/makeup")
 async def makeup_tryon(
-    person_image:  UploadFile = File(..., description="Face / portrait photo"),
-    preset:        str        = Query(
-        default="natural",
-        description="Makeup preset: natural | glam | bold_lips | smoky_eye",
-    ),
-    save_to_minio: bool = Query(default=True),
+    person_image:  UploadFile = File(...),
+    preset:        str        = Query(default="natural"),
+    save_to_minio: bool       = Query(default=True),
+    authorization: Optional[str] = Header(default=None),
 ):
-    """
-    Virtual makeup try-on.
-
-    Available presets:
-    - natural     : subtle blush + glossy nude lips + skin smoothing
-    - glam        : red smoky eye + bold blush + matte red lips
-    - bold_lips   : deep berry matte lips + skin smoothing
-    - smoky_eye   : black smoky eye + deep red lips
-
-    For custom makeup, use POST /api/makeup/custom with a raw YouCam effects list.
-    """
+    """Virtual makeup try-on (presets: natural | glam | bold_lips | smoky_eye)."""
     _validate_image(person_image, "person_image")
-
     if preset not in MAKEUP_PRESETS:
         raise HTTPException(422, f"preset must be one of: {list(MAKEUP_PRESETS.keys())}")
 
     person_bytes = await person_image.read()
+    user = _current_user(authorization)
+    api_key, secret_key = _get_youcam_keys(user) if user else ("", "")
 
     try:
         loop   = asyncio.get_event_loop()
         result = await loop.run_in_executor(
-            None, run_makeup_tryon, person_bytes, preset, None
+            None, _run_with_keys, run_makeup_tryon, api_key, secret_key,
+            person_bytes, preset, None
         )
     except Exception as e:
         _err(e)
@@ -482,30 +460,23 @@ async def makeup_tryon(
 # ─── 👁️ Eye Color Try-On ─────────────────────────────────────────────────────
 @app.post("/api/eye-color")
 async def eye_color_tryon(
-    person_image:  UploadFile = File(..., description="Portrait / face photo"),
-    color:         str        = Query(
-        default="blue",
-        description=(
-            "Color preset (blue, green, gray, hazel, violet, amber, ice_blue, honey) "
-            "OR a hex color like #2E86AB"
-        ),
-    ),
-    save_to_minio: bool = Query(default=True),
+    person_image:  UploadFile = File(...),
+    color:         str        = Query(default="blue"),
+    save_to_minio: bool       = Query(default=True),
+    authorization: Optional[str] = Header(default=None),
 ):
-    """
-    Virtual colored contact lens try-on.
-
-    Color presets: blue · green · gray · hazel · violet · amber · ice_blue · honey
-    Or pass any hex color: #2E86AB, #8B6914, etc.
-    """
+    """Virtual colored contact lens try-on."""
     _validate_image(person_image, "person_image")
 
     person_bytes = await person_image.read()
+    user = _current_user(authorization)
+    api_key, secret_key = _get_youcam_keys(user) if user else ("", "")
 
     try:
         loop   = asyncio.get_event_loop()
         result = await loop.run_in_executor(
-            None, run_eye_color_tryon, person_bytes, color
+            None, _run_with_keys, run_eye_color_tryon, api_key, secret_key,
+            person_bytes, color
         )
     except Exception as e:
         _err(e)
@@ -530,9 +501,10 @@ async def eye_color_tryon(
 # ─── 🎩 Hat Try-On ───────────────────────────────────────────────────────────
 @app.post("/api/hat")
 async def hat_tryon(
-    person_image: UploadFile = File(..., description="Person photo (head visible)"),
-    hat_image:    UploadFile = File(..., description="Hat / cap photo"),
+    person_image: UploadFile = File(...),
+    hat_image:    UploadFile = File(...),
     save_to_minio: bool = Query(default=True),
+    authorization: Optional[str] = Header(default=None),
 ):
     """Virtual hat / cap try-on powered by YouCam AI."""
     _validate_image(person_image, "person_image")
@@ -540,11 +512,14 @@ async def hat_tryon(
 
     person_bytes = await person_image.read()
     hat_bytes    = await hat_image.read()
+    user = _current_user(authorization)
+    api_key, secret_key = _get_youcam_keys(user) if user else ("", "")
 
     try:
         loop   = asyncio.get_event_loop()
         result = await loop.run_in_executor(
-            None, run_hat_tryon, person_bytes, hat_bytes
+            None, _run_with_keys, run_hat_tryon, api_key, secret_key,
+            person_bytes, hat_bytes
         )
     except Exception as e:
         _err(e)
@@ -568,9 +543,10 @@ async def hat_tryon(
 # ─── 👟 Shoes Try-On ─────────────────────────────────────────────────────────
 @app.post("/api/shoes")
 async def shoes_tryon(
-    person_image:  UploadFile = File(..., description="Full-body person photo (feet visible)"),
-    shoes_image:   UploadFile = File(..., description="Shoe / footwear photo"),
+    person_image:  UploadFile = File(...),
+    shoes_image:   UploadFile = File(...),
     save_to_minio: bool = Query(default=True),
+    authorization: Optional[str] = Header(default=None),
 ):
     """Virtual footwear try-on powered by YouCam AI."""
     _validate_image(person_image, "person_image")
@@ -578,11 +554,14 @@ async def shoes_tryon(
 
     person_bytes = await person_image.read()
     shoes_bytes  = await shoes_image.read()
+    user = _current_user(authorization)
+    api_key, secret_key = _get_youcam_keys(user) if user else ("", "")
 
     try:
         loop   = asyncio.get_event_loop()
         result = await loop.run_in_executor(
-            None, run_shoes_tryon, person_bytes, shoes_bytes
+            None, _run_with_keys, run_shoes_tryon, api_key, secret_key,
+            person_bytes, shoes_bytes
         )
     except Exception as e:
         _err(e)
@@ -637,51 +616,3 @@ async def measure(
     }
 
 
-# ─── DAPR subscriber ─────────────────────────────────────────────────────────
-@app.get("/dapr/subscribe")
-async def dapr_subscribe():
-    return [{"pubsubname": "pubsub", "topic": "images.ready", "route": "/api/process-images"}]
-
-
-@app.post("/api/process-images")
-async def process_images(event: dict):
-    """DAPR CloudEvent from Rust image-processor."""
-    import httpx
-    logger.info(f"📨 DAPR event: {event.get('type')} id={event.get('id')}")
-
-    data        = event.get("data", {})
-    request_id  = data.get("request_id", "unknown")
-    person_url  = data.get("person_image_url")
-    garment_url = data.get("garment_image_url")
-
-    if not person_url or not garment_url:
-        return {"status": "skipped", "reason": "missing_urls"}
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        person_resp  = await client.get(person_url)
-        garment_resp = await client.get(garment_url)
-
-    person_bytes  = person_resp.content
-    garment_bytes = garment_resp.content
-
-    loop         = asyncio.get_event_loop()
-    tryon_result = await loop.run_in_executor(None, run_tryon, person_bytes, garment_bytes)
-    result_url   = save_result(tryon_result["result_image"], prefix=f"results/{request_id}/")
-
-    dapr_port = os.getenv("DAPR_HTTP_PORT", "3501")
-    try:
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                f"http://localhost:{dapr_port}/v1.0/publish/pubsub/tryon.complete",
-                json={
-                    "request_id":       request_id,
-                    "result_url":       result_url,
-                    "inference_time_s": tryon_result["inference_time_s"],
-                    "mode":             tryon_result["mode"],
-                },
-                timeout=5.0,
-            )
-    except Exception as e:
-        logger.warning(f"DAPR publish failed: {e}")
-
-    return {"status": "processed", "request_id": request_id, "result_url": result_url}

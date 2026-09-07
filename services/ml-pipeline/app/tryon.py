@@ -39,10 +39,26 @@ except ImportError:
 
 
 # ─── Internal helpers ─────────────────────────────────────────────────────────
+import threading
+_local = threading.local()  # per-thread YouCam key override
+
+
+def set_keys(api_key: str, secret_key: str = ""):
+    """Set per-thread YouCam keys (called from main.py before run_in_executor)."""
+    _local.api_key    = api_key
+    _local.secret_key = secret_key
+
+
+def clear_keys():
+    """Clear per-thread key override."""
+    _local.api_key    = ""
+    _local.secret_key = ""
+
 
 def _api_key() -> str:
-    """Read key at call time — not at import time — so dotenv always works."""
-    return os.environ.get("YOUCAM_API_KEY", "").strip()
+    """Read key at call time — thread-local override first, then env var."""
+    override = getattr(_local, "api_key", "")
+    return (override or os.environ.get("YOUCAM_API_KEY", "")).strip()
 
 
 def _headers() -> dict:
