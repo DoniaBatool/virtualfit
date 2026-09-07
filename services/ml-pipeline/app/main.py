@@ -40,6 +40,7 @@ from app.tryon import (
     EYE_COLOR_PRESETS,
 )
 from app.storage import save_result
+from app.database import save_wardrobe_item, get_wardrobe_items, delete_wardrobe_item
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s  %(message)s")
 logger = logging.getLogger(__name__)
@@ -188,6 +189,31 @@ async def try_on(
 async def tryon_status():
     """Available features and API key status."""
     return model_status()
+
+
+# ─── 👗 Wardrobe (NeonDB) ─────────────────────────────────────────────────────
+@app.get("/api/wardrobe")
+async def get_wardrobe(user_id: str = Query(default="guest")):
+    """Fetch saved wardrobe items from NeonDB."""
+    return get_wardrobe_items(user_id)
+
+@app.delete("/api/wardrobe/{item_id}")
+async def delete_wardrobe(item_id: str, user_id: str = Query(default="guest")):
+    """Delete a wardrobe item from NeonDB."""
+    ok = delete_wardrobe_item(item_id, user_id)
+    return {"deleted": ok}
+
+@app.post("/api/wardrobe/save")
+async def save_to_wardrobe(
+    feature: str = Query(...),
+    result_image: str = Body(..., media_type="text/plain"),
+    user_id: str = Query(default="guest"),
+):
+    """Save a try-on result to wardrobe (called from frontend)."""
+    saved = save_wardrobe_item(feature=feature, result_url=result_image, user_id=user_id)
+    if saved:
+        return {"saved": True, "id": saved["id"]}
+    return {"saved": False}
 
 
 # ─── 👜 Bag Try-On ────────────────────────────────────────────────────────────

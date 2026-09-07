@@ -272,18 +272,24 @@ export default function TryOnPage() {
     setResultB64(null); setError(null);
   };
 
-  const saveToWardrobe = () => {
+  const saveToWardrobe = async () => {
     if (!resultSrc) return;
-    const item = {
-      id: Date.now().toString(),
-      feature,
-      name: `${feature} · ${new Date().toLocaleDateString()}`,
-      saved_at: new Date().toISOString(),
-      result_image: resultSrc,
-    };
+    try {
+      const res = await fetch(
+        `${GATEWAY}/api/wardrobe/save?feature=${feature}&user_id=guest`,
+        { method: "POST", headers: { "Content-Type": "text/plain" }, body: resultSrc }
+      );
+      const data = await res.json();
+      if (data.saved) {
+        setToast("Saved to wardrobe! ✅");
+        return;
+      }
+    } catch {}
+    // fallback: localStorage
+    const item = { id: Date.now().toString(), feature, name: `${feature} · ${new Date().toLocaleDateString()}`, saved_at: new Date().toISOString(), result_image: resultSrc };
     const existing = (() => { try { return JSON.parse(localStorage.getItem("wardrobe") || "[]"); } catch { return []; } })();
     localStorage.setItem("wardrobe", JSON.stringify([item, ...existing]));
-    setToast("Saved to wardrobe!");
+    setToast("Saved to wardrobe! ✅");
   };
 
   // ── Submit ─────────────────────────────────────────────────────────────────

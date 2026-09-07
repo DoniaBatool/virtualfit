@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { Shirt, Trash2, ArrowLeft, X, Download, ChevronLeft, ChevronRight } from "lucide-react";
 
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:3004";
+const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:8001";
 
 interface WardrobeItem {
   id: string;
