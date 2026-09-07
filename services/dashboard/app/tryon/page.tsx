@@ -366,6 +366,7 @@ export default function TryOnPage() {
   const canSubmit = personFile && (!needsItem || itemFile) && !loading;
 
   return (
+    <>
     <div className="min-h-screen" style={{ background: "var(--bg)" }}>
       {/* Nav */}
       <nav className="border-b border-amber-500/20 px-6 py-4 flex items-center justify-between">
@@ -638,5 +639,6 @@ export default function TryOnPage() {
     </div>
 
     {toast && <Toast message={toast} onDone={() => setToast(null)} />}
+    </>
   );
 }
