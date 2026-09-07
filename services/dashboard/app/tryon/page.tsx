@@ -276,7 +276,7 @@ export default function TryOnPage() {
     if (!resultSrc) return;
     try {
       const res = await fetch(
-        `${GATEWAY}/api/wardrobe/save?feature=${feature}&user_id=guest`,
+        `${ML}/api/wardrobe/save?feature=${feature}&user_id=guest`,
         { method: "POST", headers: { "Content-Type": "text/plain" }, body: resultSrc }
       );
       const data = await res.json();
