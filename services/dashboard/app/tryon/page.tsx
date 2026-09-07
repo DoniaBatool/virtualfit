@@ -90,16 +90,6 @@ const MAKEUP_PRESETS = [
   { id: "smoky_eye", label: "Smoky Eye",  desc: "Black smoky eye + dark lip" },
 ];
 
-const EYE_COLORS = [
-  { id: "blue",     label: "Blue",     hex: "#2E86AB" },
-  { id: "green",    label: "Green",    hex: "#2D6A4F" },
-  { id: "gray",     label: "Gray",     hex: "#6B7280" },
-  { id: "hazel",    label: "Hazel",    hex: "#8B6914" },
-  { id: "violet",   label: "Violet",   hex: "#7B2D8B" },
-  { id: "amber",    label: "Amber",    hex: "#C97D12" },
-  { id: "ice_blue", label: "Ice Blue", hex: "#A8D8EA" },
-  { id: "honey",    label: "Honey",    hex: "#B5860D" },
-];
 
 const BAG_STYLES = [
   { id: "random",                    label: "Auto"             },
@@ -231,9 +221,6 @@ export default function TryOnPage() {
   const [bagGender, setBagGender]             = useState("female");
   const [bagStyle, setBagStyle]               = useState("random");
   const [makeupPreset, setMakeupPreset]       = useState("natural");
-  const [eyeColor, setEyeColor]               = useState("blue");
-  const [customEyeHex, setCustomEyeHex]       = useState("#2E86AB");
-  const [useCustomEye, setUseCustomEye]       = useState(false);
 
   // UI state
   const [loading, setLoading]   = useState(false);
@@ -264,7 +251,7 @@ export default function TryOnPage() {
   // Derived
   const resultSrc = resultB64 ? `data:image/jpeg;base64,${resultB64}` : null;
 
-  const needsItem = !["makeup", "eye-color"].includes(feature);
+  const needsItem = feature !== "makeup";
 
   const onPerson = useCallback((f: File) => {
     setPersonFile(f);
@@ -342,13 +329,6 @@ export default function TryOnPage() {
           setStep("Applying makeup with YouCam AI…");
           break;
 
-        case "eye-color": {
-          const c = useCustomEye ? customEyeHex : eyeColor;
-          url = `${ML}/api/eye-color?color=${encodeURIComponent(c)}`;
-          setStep("Changing eye color with YouCam AI…");
-          break;
-        }
-
         case "hat":
           form.append("hat_image", itemFile!);
           url = `${ML}/api/hat`;
@@ -381,12 +361,11 @@ export default function TryOnPage() {
 
   // ── Item upload label ──────────────────────────────────────────────────────
   const itemLabel: Record<Feature, string> = {
-    clothes:    "Garment (shirt, dress, jacket…)",
-    bag:        "Handbag or purse photo",
-    makeup:     "",
-    "eye-color": "",
-    hat:        "Hat or cap photo",
-    shoes:      "Shoe / footwear photo",
+    clothes: "Garment (shirt, dress, jacket…)",
+    bag:     "Handbag or purse photo",
+    makeup:  "",
+    hat:     "Hat or cap photo",
+    shoes:   "Shoe / footwear photo",
   };
 
   const canSubmit = personFile && (!needsItem || itemFile) && !loading;
@@ -454,13 +433,13 @@ export default function TryOnPage() {
             {/* Person upload — always shown */}
             <div className="space-y-2">
               <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">
-                {feature === "makeup" || feature === "eye-color"
+                {feature === "makeup"
                   ? "Your Face / Portrait"
                   : "Your Photo (full-body)"}
               </p>
               <UploadZone
                 label={
-                  feature === "makeup" || feature === "eye-color"
+                  feature === "makeup"
                     ? "Close-up portrait / selfie"
                     : "Full-body photo facing camera"
                 }
@@ -562,46 +541,6 @@ export default function TryOnPage() {
                     </button>
                   ))}
                 </div>
-              </div>
-            )}
-
-            {/* Eye Color: swatches */}
-            {feature === "eye-color" && (
-              <div className="space-y-3">
-                <p className="text-xs text-slate-500">Eye Color</p>
-                <div className="flex flex-wrap gap-2">
-                  {EYE_COLORS.map((c) => (
-                    <button
-                      key={c.id}
-                      onClick={() => { setEyeColor(c.id); setUseCustomEye(false); }}
-                      title={c.label}
-                      className={`w-9 h-9 rounded-full border-2 transition-all ${
-                        !useCustomEye && eyeColor === c.id
-                          ? "border-white scale-110"
-                          : "border-transparent hover:border-slate-400"
-                      }`}
-                      style={{ background: c.hex }}
-                    />
-                  ))}
-                </div>
-                <div className="flex items-center gap-3">
-                  <label className="text-xs text-slate-500">Custom:</label>
-                  <input
-                    type="color"
-                    value={customEyeHex}
-                    onChange={(e) => { setCustomEyeHex(e.target.value); setUseCustomEye(true); }}
-                    onClick={() => setUseCustomEye(true)}
-                    className="w-10 h-8 rounded cursor-pointer border border-slate-700 bg-slate-800"
-                  />
-                  {useCustomEye && (
-                    <span className="text-xs text-amber-400">{customEyeHex}</span>
-                  )}
-                </div>
-                <p className="text-xs text-slate-500">
-                  Selected: <span className="text-white">
-                    {useCustomEye ? customEyeHex : EYE_COLORS.find((c) => c.id === eyeColor)?.label}
-                  </span>
-                </p>
               </div>
             )}
 
