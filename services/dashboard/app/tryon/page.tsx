@@ -73,15 +73,14 @@ function Toast({ message, onDone }: { message: string; onDone: () => void }) {
 const ML = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:8001";
 
 // ─── Feature config ────────────────────────────────────────────────────────────
-type Feature = "clothes" | "bag" | "makeup" | "eye-color" | "hat" | "shoes";
+type Feature = "clothes" | "bag" | "makeup" | "hat" | "shoes";
 
-const FEATURES: { id: Feature; emoji: string; label: string; disabled?: boolean; disabledMsg?: string }[] = [
-  { id: "clothes",   emoji: "👔", label: "Clothes"   },
-  { id: "bag",       emoji: "👜", label: "Bag"        },
-  { id: "makeup",    emoji: "💄", label: "Makeup"     },
-  { id: "eye-color", emoji: "👁️",  label: "Eye Color", disabled: true, disabledMsg: "Requires paid YouCam API tier" },
-  { id: "hat",       emoji: "🎩", label: "Hat"        },
-  { id: "shoes",     emoji: "👟", label: "Shoes"      },
+const FEATURES: { id: Feature; emoji: string; label: string }[] = [
+  { id: "clothes", emoji: "👔", label: "Clothes" },
+  { id: "bag",     emoji: "👜", label: "Bag"     },
+  { id: "makeup",  emoji: "💄", label: "Makeup"  },
+  { id: "hat",     emoji: "🎩", label: "Hat"     },
+  { id: "shoes",   emoji: "👟", label: "Shoes"   },
 ];
 
 const MAKEUP_PRESETS = [
@@ -433,28 +432,18 @@ export default function TryOnPage() {
         {/* ── Feature Tabs ── */}
         <div className="flex flex-wrap gap-2 justify-center">
           {FEATURES.map((f) => (
-            <div key={f.id} className="relative group">
-              <button
-                onClick={() => !f.disabled && switchFeature(f.id)}
-                disabled={f.disabled}
-                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all border ${
-                  f.disabled
-                    ? "bg-slate-800/30 border-slate-700/50 text-slate-600 cursor-not-allowed opacity-50"
-                    : feature === f.id
-                    ? "bg-amber-600 border-amber-500 text-white"
-                    : "bg-slate-800/50 border-slate-700 text-slate-400 hover:text-white hover:border-slate-500"
-                }`}
-              >
-                <span>{f.emoji}</span>
-                <span>{f.label}</span>
-                {f.disabled && <span className="text-xs bg-slate-700 text-slate-400 px-1.5 py-0.5 rounded-md ml-1">Soon</span>}
-              </button>
-              {f.disabled && f.disabledMsg && (
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-48 text-center text-xs text-slate-300 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 shadow-xl pointer-events-none">
-                  {f.disabledMsg}
-                </div>
-              )}
-            </div>
+            <button
+              key={f.id}
+              onClick={() => switchFeature(f.id)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all border ${
+                feature === f.id
+                  ? "bg-amber-600 border-amber-500 text-white"
+                  : "bg-slate-800/50 border-slate-700 text-slate-400 hover:text-white hover:border-slate-500"
+              }`}
+            >
+              <span>{f.emoji}</span>
+              <span>{f.label}</span>
+            </button>
           ))}
         </div>
 
