@@ -3,6 +3,56 @@
 import { useState } from "react";
 import { Eye, EyeOff, LogIn } from "lucide-react";
 
+function VFLogo({ size = 40 }: { size?: number }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width={size} height={size}>
+      <defs>
+        <clipPath id="vfbox"><rect width="100" height="100" rx="22"/></clipPath>
+        <clipPath id="vflh"><rect x="0" y="0" width="50" height="100"/></clipPath>
+        <clipPath id="vfrh"><rect x="50" y="0" width="50" height="100"/></clipPath>
+        <linearGradient id="vfmg" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%"   stopColor="#160A00"/>
+          <stop offset="14%"  stopColor="#7A5010"/>
+          <stop offset="38%"  stopColor="#FAD868"/>
+          <stop offset="56%"  stopColor="#C99018"/>
+          <stop offset="78%"  stopColor="#6A4008"/>
+          <stop offset="100%" stopColor="#160A00"/>
+        </linearGradient>
+        <pattern id="vflp" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(30 50 50)">
+          <rect width="14" height="14" fill="#07101E"/>
+          <rect width="10" height="14" fill="url(#vfmg)"/>
+        </pattern>
+        <pattern id="vfrp" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(-30 50 50)">
+          <rect width="14" height="14" fill="#07101E"/>
+          <rect width="10" height="14" fill="url(#vfmg)"/>
+        </pattern>
+        <radialGradient id="vftg" cx="50%" cy="8%" r="55%">
+          <stop offset="0%"   stopColor="#FFF2B0" stopOpacity="0.22"/>
+          <stop offset="100%" stopColor="#C9A84C" stopOpacity="0"/>
+        </radialGradient>
+        <radialGradient id="vfts" cx="50%" cy="90%" r="38%">
+          <stop offset="0%"   stopColor="#000" stopOpacity="0.40"/>
+          <stop offset="100%" stopColor="#000" stopOpacity="0"/>
+        </radialGradient>
+        <linearGradient id="vfrim" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%"   stopColor="#F8D468"/>
+          <stop offset="45%"  stopColor="#C9A84C"/>
+          <stop offset="100%" stopColor="#7A5810"/>
+        </linearGradient>
+      </defs>
+      <rect width="100" height="100" rx="22" fill="#07101E"/>
+      <g clipPath="url(#vfbox)">
+        <g clipPath="url(#vflh)"><rect width="100" height="100" fill="url(#vflp)"/></g>
+        <g clipPath="url(#vfrh)"><rect width="100" height="100" fill="url(#vfrp)"/></g>
+        <rect width="100" height="100" fill="url(#vftg)"/>
+        <rect width="100" height="100" fill="url(#vfts)"/>
+        <line x1="50" y1="0" x2="50" y2="100" stroke="#07101E" strokeWidth="2" opacity="0.55"/>
+      </g>
+      <rect x="2" y="2" width="96" height="96" rx="20.5" fill="none" stroke="url(#vfrim)" strokeWidth="3.5" opacity="0.88"/>
+    </svg>
+  );
+}
+
 const ML = process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:8001";
 
 export default function LoginPage() {
@@ -38,10 +88,8 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center" style={{ background: "var(--bg)" }}>
       <div className="glass w-full max-w-md mx-4 p-8 rounded-2xl">
         {/* Logo */}
-        <div className="flex items-center gap-2 mb-8">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center">
-            <span className="text-black font-black text-sm">VF</span>
-          </div>
+        <div className="flex items-center gap-3 mb-8">
+          <VFLogo size={44} />
           <span className="text-white font-bold text-xl">VirtualFit</span>
         </div>
 
