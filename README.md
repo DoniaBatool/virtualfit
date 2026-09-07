@@ -43,12 +43,13 @@ All AI inference runs on **Perfect Corp's cloud** (YouCam API) — photorealisti
 └─────────────────────────────────────────────────────┘
 ```
 
-| Service | Tech | Deployed On | Port |
+| Service | Tech | Deployed On | Status |
 |---|---|---|---|
-| Dashboard | Next.js 15 | Vercel | — |
-| ML Pipeline | Python FastAPI | Railway | 8001 |
-| AI Inference | YouCam API | Perfect Corp cloud | — |
-| Image Storage | MinIO | Docker (local, optional) | 9000 |
+| Dashboard | Next.js 15 | Vercel | ✅ Phase 1 |
+| ML Pipeline | Python FastAPI | Railway | ✅ Phase 1 |
+| AI Inference | YouCam API | Perfect Corp cloud | ✅ Phase 1 |
+| Database | PostgreSQL | NeonDB (serverless) | 🔜 Phase 2 |
+| Image Storage | S3-compatible | Cloudflare R2 | 🔜 Phase 2 |
 
 ---
 
@@ -166,43 +167,58 @@ curl -X POST http://localhost:8001/api/tryon \
 
 ## Deployment
 
-### Vercel (Dashboard)
+### Phase 1 — Core (Vercel + Railway)
 
-1. Go to [vercel.com](https://vercel.com) → New Project → import repo
-2. Set Root Directory: `services/dashboard`
-3. Add env var: `NEXT_PUBLIC_GATEWAY_URL=https://your-railway-url`
+**Railway (ML Pipeline):**
+1. [railway.app](https://railway.app) → New Project → Deploy from GitHub
+2. Root Directory: `services/ml-pipeline`
+3. Env vars: `YOUCAM_API_KEY`, `YOUCAM_SECRET_KEY`
+4. Deploy — auto-detected from `railway.json`
+
+**Vercel (Dashboard):**
+1. [vercel.com](https://vercel.com) → New Project → import repo
+2. Root Directory: `services/dashboard`
+3. Env var: `NEXT_PUBLIC_GATEWAY_URL=https://your-railway-url`
 4. Deploy
 
-### Railway (ML Pipeline)
+### Phase 2 — Database + Storage (NeonDB + Cloudflare R2)
 
-1. Go to [railway.app](https://railway.app) → New Project → Deploy from GitHub
-2. Set Root Directory: `services/ml-pipeline`
-3. Add env vars: `YOUCAM_API_KEY`, `YOUCAM_SECRET_KEY`
-4. Deploy (auto-detected from `railway.json`)
+**NeonDB (PostgreSQL — user accounts, wardrobe):**
+1. [neon.tech](https://neon.tech) → free account → create database `virtualfit`
+2. Copy connection string → add to `.env` and Railway/Vercel env vars:
+   ```
+   DATABASE_URL=postgresql://user:pass@ep-xxx.neon.tech/virtualfit
+   ```
+
+**Cloudflare R2 (image storage — replaces local MinIO):**
+1. [dash.cloudflare.com](https://dash.cloudflare.com) → R2 → Create bucket `virtualfit-images`
+2. Create API token → add to `.env` and Railway env vars:
+   ```
+   MINIO_ENDPOINT=https://xxx.r2.cloudflarestorage.com
+   MINIO_ACCESS_KEY=your_r2_access_key
+   MINIO_SECRET_KEY=your_r2_secret_key
+   MINIO_BUCKET=virtualfit-images
+   ```
+   > Code stays identical — R2 is S3-compatible, boto3 works unchanged.
 
 ---
 
 ## Environment Variables
 
 ```env
-# YouCam API (required)
+# ── Phase 1 (required now) ──────────────────────────────
 YOUCAM_API_KEY=your_api_key_here
 YOUCAM_SECRET_KEY=your_secret_key_here
+NEXT_PUBLIC_GATEWAY_URL=http://localhost:8001   # → Railway URL in production
 
-# JWT (for future auth)
+# ── Phase 2 (NeonDB + Cloudflare R2 — add later) ───────
+DATABASE_URL=postgresql://user:pass@ep-xxx.neon.tech/virtualfit
 JWT_SECRET=your_jwt_secret
 
-# MinIO (optional — local image storage)
-MINIO_ENDPOINT=localhost:9000
-MINIO_ACCESS_KEY=minioadmin
-MINIO_SECRET_KEY=minioadmin
-MINIO_BUCKET=tryon-images
-
-# Database (optional — for future user accounts)
-DATABASE_URL=postgresql://vtuser:vtpass@localhost:5433/virtual_tryon
-
-# Service URLs
-NEXT_PUBLIC_GATEWAY_URL=http://localhost:8001
+MINIO_ENDPOINT=https://xxx.r2.cloudflarestorage.com   # Cloudflare R2 in prod
+MINIO_ACCESS_KEY=your_r2_access_key                   # or minioadmin locally
+MINIO_SECRET_KEY=your_r2_secret_key
+MINIO_BUCKET=virtualfit-images
 ```
 
 ---

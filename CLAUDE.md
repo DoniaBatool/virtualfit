@@ -48,10 +48,15 @@ User apni photo upload kare aur virtually kuch bhi try-on kar sake — YouCam (P
 **No local GPU needed.** YouCam API handles all inference in the cloud.  
 **Industry relevance:** Zara, Amazon, Daraz jaise e-commerce platforms ke liye
 
-### YouCam API Setup (REQUIRED)
-1. Register at: https://yce.makeupar.com/ai-api (free tier available)
-2. Get your API key
-3. Add to `.env`:  `YOUCAM_API_KEY=your_key_here`
+### Phase 1 Setup (REQUIRED)
+1. YouCam API key: [yce.makeupar.com/ai-api](https://yce.makeupar.com/ai-api) → free tier
+2. Add to `.env`: `YOUCAM_API_KEY=` + `YOUCAM_SECRET_KEY=`
+3. Deploy ML Pipeline to Railway, Dashboard to Vercel
+
+### Phase 2 Setup (After Phase 1 deploys)
+1. **NeonDB** — [neon.tech](https://neon.tech) → free PostgreSQL → add `DATABASE_URL` to env
+2. **Cloudflare R2** — [dash.cloudflare.com](https://dash.cloudflare.com) → R2 → free 10GB → add `MINIO_ENDPOINT` + keys
+   - R2 is S3-compatible — boto3 code stays unchanged, just swap the endpoint
 
 ---
 
@@ -70,13 +75,17 @@ MinIO (local Docker)             ← result image storage (S3-compatible)
 ```
 
 ### Stack
-- **Next.js 15** — frontend (Vercel)
-- **Python FastAPI** — backend ML pipeline (Railway)
-- **YouCam API** — all AI inference (Perfect Corp cloud, no local GPU)
-- **MinIO** — image storage (local Docker, optional)
 
-> ⚠️ **No local ML models, no Go, no Rust, no Redis, no Qdrant, no Redpanda.**
-> YouCam cloud handles all AI. Project is intentionally minimal and deployable.
+| Service | Tech | Phase |
+|---|---|---|
+| Frontend | Next.js 15 → Vercel | ✅ Phase 1 |
+| ML Pipeline | Python FastAPI → Railway | ✅ Phase 1 |
+| AI Inference | YouCam API (Perfect Corp cloud) | ✅ Phase 1 |
+| Database | PostgreSQL → NeonDB (serverless free) | 🔜 Phase 2 |
+| Image Storage | S3-compatible → Cloudflare R2 (free 10GB) | 🔜 Phase 2 |
+
+> ⚠️ **No local ML models, no Go, no Rust, no Redis, no Qdrant, no Redpanda, no Docker needed.**
+> YouCam cloud handles all AI. Phase 1 is fully deployable with just Railway + Vercel.
 
 ---
 
